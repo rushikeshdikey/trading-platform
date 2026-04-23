@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Import result · Trading Journal{% endblock %}
+{% block content %}
+<div class="max-w-3xl mx-auto space-y-6">
+  <h1 class="text-2xl font-bold">Zerodha import complete</h1>
+
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+    <div class="card p-4"><div class="metric-label">Executions parsed</div><div class="metric-value">{{ executions_parsed }}</div></div>
+    <div class="card p-4"><div class="metric-label">Applied</div><div class="metric-value text-emerald-700">{{ executions_applied }}</div></div>
+    <div class="card p-4"><div class="metric-label">Skipped (dup.)</div><div class="metric-value text-zinc-600">{{ executions_skipped_duplicate }}</div></div>
+    <div class="card p-4"><div class="metric-label">Symbols touched</div><div class="metric-value">{{ symbols_touched | length }}</div></div>
+  </div>
+
+  <div class="grid grid-cols-3 gap-3">
+    <div class="card p-4"><div class="metric-label">New trades opened</div><div class="metric-value">{{ trades_created }}</div></div>
+    <div class="card p-4"><div class="metric-label">Existing trades extended</div><div class="metric-value">{{ trades_extended }}</div></div>
+    <div class="card p-4"><div class="metric-label">Trades auto-closed</div><div class="metric-value">{{ trades_closed }}</div></div>
+  </div>
+
+  {% if symbols_touched %}
+  <div class="card p-4">
+    <h3 class="font-semibold mb-2">Symbols touched</h3>
+    <div class="flex flex-wrap gap-2">
+      {% for s in symbols_touched %}<span class="pill bg-zinc-100 text-zinc-900">{{ s }}</span>{% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% if warnings %}
+  <div class="card p-4">
+    <h3 class="font-semibold mb-2">Warnings</h3>
+    <ul class="text-sm text-zinc-600 list-disc pl-5 space-y-1">
+      {% for w in warnings %}<li>{{ w }}</li>{% endfor %}
+    </ul>
+    {% if more_warnings %}<p class="text-xs text-zinc-500 mt-2">…and {{ more_warnings }} more.</p>{% endif %}
+  </div>
+  {% endif %}
+
+  <div class="flex gap-3">
+    <a href="/dashboard" class="btn btn-primary">Go to dashboard</a>
+    <a href="/trades?status=open" class="btn btn-ghost">See trades</a>
+    <a href="/import" class="btn btn-ghost">Import another</a>
+  </div>
+  <p class="text-sm text-zinc-500">
+    Note: broker exports don't have stop-loss or setup info. Open each newly-imported trade and set SL + Setup to make the P/L and R:R correct.
+  </p>
+</div>
+{% endblock %}

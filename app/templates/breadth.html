@@ -1,0 +1,365 @@
+{% extends "base.html" %}
+{% block title %}Market breadth · Trading Journal{% endblock %}
+{% block content %}
+
+<div class="flex items-start justify-between mb-6">
+  <div>
+    <h1 class="text-2xl font-semibold tracking-tight">Market breadth</h1>
+    <p class="text-zinc-500 text-sm mt-1">
+      {% if latest %}
+        {{ latest.date.strftime('%d %b %Y') }} · {{ segment_label }} · {{ latest.total_stocks }} of {{ universe_size }} stocks sampled
+      {% else %}
+        No data yet for {{ segment_label }}. Click "Recompute" to pull history.
+      {% endif %}
+    </p>
+  </div>
+  <div class="flex items-center gap-2">
+    <!-- Range selector -->
+    <div class="inline-flex rounded-lg border border-zinc-200 p-0.5 bg-zinc-50">
+      {% for r in range_options %}
+      <a href="/breadth?range={{ r }}&segment={{ segment }}"
+         class="px-3 py-1 text-xs font-medium rounded-md {% if range == r %}bg-white text-zinc-900 shadow-sm{% else %}text-zinc-500 hover:text-zinc-900{% endif %}">{{ r }}</a>
+      {% endfor %}
+    </div>
+    <form method="post" action="/breadth/refresh">
+      <button class="btn btn-outline" title="Fetches ~300 stocks across large/mid/small caps from Yahoo and recomputes breadth. Takes 30-60s.">
+        <i data-lucide="refresh-cw" class="w-4 h-4"></i>Recompute
+      </button>
+    </form>
+  </div>
+</div>
+
+<!-- Segment selector: All / Large / Mid / Small -->
+<div class="flex items-center gap-2 mb-5">
+  <span class="text-xs font-semibold uppercase tracking-wider text-zinc-400">Segment</span>
+  <div class="inline-flex rounded-lg border border-zinc-200 p-0.5 bg-zinc-50">
+    {% for seg in segment_choices %}
+    <a href="/breadth?range={{ range }}&segment={{ seg }}"
+       class="px-4 py-1.5 text-sm font-medium rounded-md {% if segment == seg %}bg-white text-zinc-900 shadow-sm{% else %}text-zinc-500 hover:text-zinc-900{% endif %}">{{ segment_labels[seg] }}</a>
+    {% endfor %}
+  </div>
+</div>
+
+<!-- Cap leadership strip: side-by-side snapshot per segment -->
+{% if segment_snapshot and segment_snapshot[0].row %}
+<div class="card p-4 mb-5">
+  <div class="flex items-center justify-between mb-3">
+    <h3 class="text-sm font-semibold">Cap leadership</h3>
+    <span class="text-xs text-zinc-500">% above 50 EMA · higher = stronger segment</span>
+  </div>
+  <div class="grid grid-cols-4 gap-4">
+    {% for snap in segment_snapshot %}
+      {% set r = snap.row %}
+      {% if r %}
+      <a href="/breadth?range={{ range }}&segment={{ snap.key }}"
+         class="block rounded-lg border {% if segment == snap.key %}border-zinc-900 bg-zinc-50{% else %}border-zinc-200 hover:border-zinc-400{% endif %} p-3 transition">
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-semibold uppercase tracking-wider text-zinc-500">{{ snap.label }}</span>
+          <span class="text-xs text-zinc-400">{{ r.total_stocks }}</span>
+        </div>
+        <div class="mt-2 text-2xl font-semibold tabular-nums {% if r.pct_above_50ema >= 50 %}text-emerald-600{% else %}text-rose-600{% endif %}">
+          {{ "%.1f" | format(r.pct_above_50ema) }}%
+        </div>
+        <div class="mt-1 text-xs text-zinc-500">
+          <span class="text-emerald-600">{{ r.advances }}↑</span>
+          <span class="mx-1">·</span>
+          <span class="text-rose-600">{{ r.declines }}↓</span>
+          <span class="mx-1">·</span>
+          <span>20EMA {{ "%.0f" | format(r.pct_above_20ema) }}%</span>
+        </div>
+      </a>
+      {% endif %}
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{% set refreshed = request.query_params.get('refreshed') %}
+{% set err = request.query_params.get('error') %}
+{% if refreshed %}
+<div class="mb-4 p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm">
+  Recomputed <strong>{{ refreshed }}</strong> day(s) of breadth from {{ request.query_params.get('symbols') or '—' }} symbols.
+</div>
+{% endif %}
+{% if err %}
+<div class="mb-4 p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-sm">{{ err }}</div>
+{% endif %}
+
+{% if not latest %}
+<div class="card p-10 text-center">
+  <i data-lucide="bar-chart-3" class="w-10 h-10 text-zinc-300 mx-auto mb-3"></i>
+  <p class="text-zinc-500 mb-4">Press the <strong>Recompute</strong> button to pull the latest Nifty 50 data from Yahoo Finance and fill in ~90 days of breadth.</p>
+  <form method="post" action="/breadth/refresh">
+    <button class="btn btn-primary"><i data-lucide="play" class="w-4 h-4"></i>Compute now</button>
+  </form>
+</div>
+{% else %}
+
+<!-- Headline strip: sentiment + current levels -->
+{% set thrust_pct = (latest.pct_above_20ema + latest.pct_above_50ema + latest.pct_above_200ema) / 3 %}
+{% set ad_ratio = (latest.advances / latest.declines) if latest.declines else None %}
+{% set net_hl = latest.new_highs_52w - latest.new_lows_52w %}
+<div class="card mb-6 overflow-hidden">
+  <div class="grid grid-cols-1 md:grid-cols-6 divide-y md:divide-y-0 md:divide-x divide-zinc-200">
+    <!-- Sentiment hero -->
+    <div class="p-5 md:col-span-1 bg-gradient-to-br
+      {% if thrust_pct >= 55 %}from-emerald-50 to-white
+      {% elif thrust_pct >= 35 %}from-zinc-50 to-white
+      {% else %}from-rose-50 to-white{% endif %}">
+      <div class="metric-label mb-2">Sentiment</div>
+      <span class="pill text-sm px-2.5 py-1 {{ sentiment_class }} font-semibold">
+        <i data-lucide="activity" class="w-3.5 h-3.5"></i>{{ sentiment_label }}
+      </span>
+      <div class="mt-3 text-xs text-zinc-500">
+        Thrust <span class="font-semibold tabular-nums text-zinc-900">{{ "%.1f" | format(thrust_pct) }}%</span>
+      </div>
+    </div>
+
+    <!-- % above 20 EMA -->
+    <div class="p-5">
+      <div class="flex items-center gap-1.5 mb-1">
+        <i data-lucide="trending-up" class="w-3.5 h-3.5 text-zinc-400"></i>
+        <span class="metric-label">% above 20 EMA</span>
+      </div>
+      <div class="text-2xl font-semibold tracking-tight tabular-nums {% if latest.pct_above_20ema >= 50 %}text-emerald-600{% else %}text-rose-600{% endif %}">
+        {{ "%.1f" | format(latest.pct_above_20ema) }}%
+      </div>
+      <div class="mt-2 h-1.5 rounded-full bg-zinc-100 overflow-hidden">
+        <div class="h-full {% if latest.pct_above_20ema >= 50 %}bg-emerald-500{% else %}bg-rose-500{% endif %}" style="width: {{ latest.pct_above_20ema }}%"></div>
+      </div>
+      <div class="text-xs text-zinc-500 mt-1.5">Short-term momentum</div>
+    </div>
+
+    <!-- % above 50 EMA -->
+    <div class="p-5">
+      <div class="flex items-center gap-1.5 mb-1">
+        <i data-lucide="line-chart" class="w-3.5 h-3.5 text-zinc-400"></i>
+        <span class="metric-label">% above 50 EMA</span>
+      </div>
+      <div class="text-2xl font-semibold tracking-tight tabular-nums {% if latest.pct_above_50ema >= 50 %}text-emerald-600{% else %}text-rose-600{% endif %}">
+        {{ "%.1f" | format(latest.pct_above_50ema) }}%
+      </div>
+      <div class="mt-2 h-1.5 rounded-full bg-zinc-100 overflow-hidden">
+        <div class="h-full {% if latest.pct_above_50ema >= 50 %}bg-emerald-500{% else %}bg-rose-500{% endif %}" style="width: {{ latest.pct_above_50ema }}%"></div>
+      </div>
+      <div class="text-xs text-zinc-500 mt-1.5">Intermediate trend</div>
+    </div>
+
+    <!-- % above 200 EMA -->
+    <div class="p-5">
+      <div class="flex items-center gap-1.5 mb-1">
+        <i data-lucide="shield" class="w-3.5 h-3.5 text-zinc-400"></i>
+        <span class="metric-label">% above 200 EMA</span>
+      </div>
+      <div class="text-2xl font-semibold tracking-tight tabular-nums {% if latest.pct_above_200ema >= 50 %}text-emerald-600{% else %}text-rose-600{% endif %}">
+        {{ "%.1f" | format(latest.pct_above_200ema) }}%
+      </div>
+      <div class="mt-2 h-1.5 rounded-full bg-zinc-100 overflow-hidden">
+        <div class="h-full {% if latest.pct_above_200ema >= 50 %}bg-emerald-500{% else %}bg-rose-500{% endif %}" style="width: {{ latest.pct_above_200ema }}%"></div>
+      </div>
+      <div class="text-xs text-zinc-500 mt-1.5">Primary trend health</div>
+    </div>
+
+    <!-- Net H/L -->
+    <div class="p-5">
+      <div class="flex items-center gap-1.5 mb-1">
+        <i data-lucide="flame" class="w-3.5 h-3.5 text-zinc-400"></i>
+        <span class="metric-label">52-wk net H/L</span>
+      </div>
+      <div class="text-2xl font-semibold tracking-tight tabular-nums {% if net_hl > 0 %}text-emerald-600{% elif net_hl < 0 %}text-rose-600{% else %}text-zinc-500{% endif %}">
+        {{ '%+d' | format(net_hl) }}
+      </div>
+      <div class="mt-2 flex items-center gap-3 text-xs">
+        <span class="inline-flex items-center gap-1 text-emerald-600">
+          <span class="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500"></span>{{ latest.new_highs_52w }} highs
+        </span>
+        <span class="inline-flex items-center gap-1 text-rose-600">
+          <span class="inline-block w-1.5 h-1.5 rounded-full bg-rose-500"></span>{{ latest.new_lows_52w }} lows
+        </span>
+      </div>
+    </div>
+
+    <!-- A/D ratio -->
+    <div class="p-5">
+      <div class="flex items-center gap-1.5 mb-1">
+        <i data-lucide="scale" class="w-3.5 h-3.5 text-zinc-400"></i>
+        <span class="metric-label">A/D ratio</span>
+      </div>
+      <div class="text-2xl font-semibold tracking-tight tabular-nums {% if latest.advances >= latest.declines %}text-emerald-600{% else %}text-rose-600{% endif %}">
+        {% if ad_ratio is none %}∞{% else %}{{ "%.2f" | format(ad_ratio) }}{% endif %}<span class="text-zinc-400 text-base font-normal"> : 1</span>
+      </div>
+      <div class="mt-2 flex items-center gap-3 text-xs">
+        <span class="inline-flex items-center gap-1 text-emerald-600">
+          <i data-lucide="arrow-up" class="w-3 h-3"></i>{{ latest.advances }}
+        </span>
+        <span class="inline-flex items-center gap-1 text-rose-600">
+          <i data-lucide="arrow-down" class="w-3 h-3"></i>{{ latest.declines }}
+        </span>
+        {% if latest.unchanged %}
+        <span class="text-zinc-400">· {{ latest.unchanged }} flat</span>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Today's Advance / Decline split -->
+<div class="grid lg:grid-cols-2 gap-5 mb-5">
+  <div class="card p-5">
+    <div class="flex items-baseline justify-between mb-4">
+      <h3 class="font-semibold">Today's advance / decline</h3>
+      <span class="text-xs text-zinc-500">{{ latest.date.strftime('%d %b') }}</span>
+    </div>
+    {% set total = latest.advances + latest.declines + latest.unchanged %}
+    {% set up_pct = (100 * latest.advances / total) if total else 0 %}
+    {% set dn_pct = (100 * latest.declines / total) if total else 0 %}
+    <div class="grid grid-cols-3 gap-4 mb-4">
+      <div class="text-center">
+        <div class="text-4xl font-bold tabular-nums text-emerald-600">{{ latest.advances }}</div>
+        <div class="text-xs text-zinc-500 mt-1 uppercase tracking-wide font-semibold">Advancing</div>
+        <div class="text-xs text-emerald-600 mt-0.5">{{ "%.0f" | format(up_pct) }}%</div>
+      </div>
+      <div class="text-center">
+        <div class="text-4xl font-bold tabular-nums text-zinc-400">{{ latest.unchanged }}</div>
+        <div class="text-xs text-zinc-500 mt-1 uppercase tracking-wide font-semibold">Unchanged</div>
+        <div class="text-xs text-zinc-400 mt-0.5">{{ "%.0f" | format(100*latest.unchanged/total if total else 0) }}%</div>
+      </div>
+      <div class="text-center">
+        <div class="text-4xl font-bold tabular-nums text-rose-600">{{ latest.declines }}</div>
+        <div class="text-xs text-zinc-500 mt-1 uppercase tracking-wide font-semibold">Declining</div>
+        <div class="text-xs text-rose-600 mt-0.5">{{ "%.0f" | format(dn_pct) }}%</div>
+      </div>
+    </div>
+    <!-- Split bar -->
+    <div class="flex h-2.5 rounded-full overflow-hidden bg-zinc-100">
+      <div class="bg-emerald-500" style="width: {{ up_pct }}%"></div>
+      <div class="bg-zinc-300" style="width: {{ 100 * latest.unchanged / total if total else 0 }}%"></div>
+      <div class="bg-rose-500" style="width: {{ dn_pct }}%"></div>
+    </div>
+    <div class="text-center text-sm text-zinc-600 mt-3">
+      Net: <span class="font-semibold {% if latest.advances - latest.declines >= 0 %}text-emerald-600{% else %}text-rose-600{% endif %}">{{ '%+d' | format(latest.advances - latest.declines) }}</span>
+    </div>
+  </div>
+
+  <div class="card p-5">
+    <div class="flex items-baseline justify-between mb-3">
+      <h3 class="font-semibold">Daily advances − declines</h3>
+      <span class="text-xs text-zinc-500">last {{ rows | length }} trading days</span>
+    </div>
+    <div style="height: 260px; position: relative;"><canvas id="adBarsChart"></canvas></div>
+  </div>
+</div>
+
+<!-- % above EMA trend charts -->
+<div class="grid md:grid-cols-3 gap-5 mb-6">
+  <div class="card p-5">
+    <div class="flex items-baseline justify-between mb-2">
+      <h3 class="font-semibold text-sm">% above 20 EMA</h3>
+      <span class="text-xl font-semibold tabular-nums {% if latest.pct_above_20ema >= 50 %}text-emerald-600{% else %}text-rose-600{% endif %}">{{ "%.1f" | format(latest.pct_above_20ema) }}%</span>
+    </div>
+    <div style="height: 160px; position: relative;"><canvas id="ema20Chart"></canvas></div>
+  </div>
+  <div class="card p-5">
+    <div class="flex items-baseline justify-between mb-2">
+      <h3 class="font-semibold text-sm">% above 50 EMA</h3>
+      <span class="text-xl font-semibold tabular-nums {% if latest.pct_above_50ema >= 50 %}text-emerald-600{% else %}text-rose-600{% endif %}">{{ "%.1f" | format(latest.pct_above_50ema) }}%</span>
+    </div>
+    <div style="height: 160px; position: relative;"><canvas id="ema50Chart"></canvas></div>
+  </div>
+  <div class="card p-5">
+    <div class="flex items-baseline justify-between mb-2">
+      <h3 class="font-semibold text-sm">% above 200 EMA</h3>
+      <span class="text-xl font-semibold tabular-nums {% if latest.pct_above_200ema >= 50 %}text-emerald-600{% else %}text-rose-600{% endif %}">{{ "%.1f" | format(latest.pct_above_200ema) }}%</span>
+    </div>
+    <div style="height: 160px; position: relative;"><canvas id="ema200Chart"></canvas></div>
+  </div>
+</div>
+
+<!-- 52-week highs/lows trend -->
+<div class="card p-5 mb-6">
+  <div class="flex items-baseline justify-between mb-3">
+    <h3 class="font-semibold">52-week new highs vs new lows</h3>
+    <span class="text-xs text-zinc-500">Momentum extremes</span>
+  </div>
+  <div style="height: 180px; position: relative;"><canvas id="hlChart"></canvas></div>
+</div>
+
+<script>
+(function() {
+  const rows = {{ rows | map(attribute='date') | map('string') | list | tojson }};
+  const advances = {{ rows | map(attribute='advances') | list | tojson }};
+  const declines = {{ rows | map(attribute='declines') | list | tojson }};
+  const net = advances.map((a, i) => a - declines[i]);
+  const e20 = {{ rows | map(attribute='pct_above_20ema') | list | tojson }};
+  const e50 = {{ rows | map(attribute='pct_above_50ema') | list | tojson }};
+  const e200 = {{ rows | map(attribute='pct_above_200ema') | list | tojson }};
+  const highs = {{ rows | map(attribute='new_highs_52w') | list | tojson }};
+  const lows = {{ rows | map(attribute='new_lows_52w') | list | tojson }};
+
+  const commonOpts = (yFmt) => ({
+    responsive: true, maintainAspectRatio: false, animation: false,
+    plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false } },
+    scales: {
+      x: { ticks: { font: { size: 10 }, maxTicksLimit: 8 }, grid: { display: false } },
+      y: { ticks: { font: { size: 10 }, callback: yFmt }, grid: { color: '#f4f4f5' } },
+    },
+  });
+
+  function areaChart(id, data, color) {
+    new Chart(document.getElementById(id), {
+      type: 'line',
+      data: {
+        labels: rows,
+        datasets: [{
+          data,
+          borderColor: color, backgroundColor: color + '20',
+          tension: 0.3, fill: true, pointRadius: 0, borderWidth: 1.5,
+        }],
+      },
+      options: {
+        ...commonOpts(v => v + '%'),
+        scales: {
+          ...commonOpts(v => v + '%').scales,
+          y: { min: 0, max: 100, ticks: { font: { size: 10 }, callback: v => v + '%' }, grid: { color: '#f4f4f5' } },
+        },
+      },
+    });
+  }
+  areaChart('ema20Chart', e20, '#0ea5e9');     // sky
+  areaChart('ema50Chart', e50, '#8b5cf6');     // violet
+  areaChart('ema200Chart', e200, '#10b981');   // emerald
+
+  // A-D bar chart (green / red)
+  new Chart(document.getElementById('adBarsChart'), {
+    type: 'bar',
+    data: {
+      labels: rows,
+      datasets: [{
+        data: net,
+        backgroundColor: net.map(v => v >= 0 ? '#10b981' : '#f43f5e'),
+        borderRadius: 2,
+      }],
+    },
+    options: commonOpts(v => (Math.abs(v) >= 1000 ? (v/1000).toFixed(1) + 'k' : v)),
+  });
+
+  // New highs vs new lows line
+  new Chart(document.getElementById('hlChart'), {
+    type: 'line',
+    data: {
+      labels: rows,
+      datasets: [
+        { label: 'New highs', data: highs, borderColor: '#10b981', backgroundColor: '#10b98120', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 },
+        { label: 'New lows',  data: lows,  borderColor: '#f43f5e', backgroundColor: '#f43f5e20', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 },
+      ],
+    },
+    options: {
+      ...commonOpts(v => v),
+      plugins: { legend: { display: true, position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } }, tooltip: { mode: 'index', intersect: false } },
+    },
+  });
+})();
+</script>
+
+{% endif %}
+{% endblock %}

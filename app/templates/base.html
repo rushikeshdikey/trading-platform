@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}Trading Journal{% endblock %}</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="apple-touch-icon" href="/static/favicon.svg">
+  <meta name="theme-color" content="#18181b">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.14.1/dist/cdn.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/luxon@3/build/global/luxon.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@0.2.1"></script>
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <link rel="preconnect" href="https://rsms.me/">
+  <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+  <style>
+    /* shadcn-inspired tokens */
+    :root {
+      --background: #ffffff;
+      --foreground: #09090b;
+      --card: #ffffff;
+      --card-foreground: #09090b;
+      --muted: #f4f4f5;
+      --muted-foreground: #71717a;
+      --primary: #18181b;          /* zinc-900, the shadcn signature */
+      --primary-foreground: #fafafa;
+      --border: #e4e4e7;           /* zinc-200 */
+      --input: #e4e4e7;
+      --ring: #18181b;
+      --accent: #f4f4f5;
+      --destructive: #dc2626;
+      --radius: 0.6rem;
+    }
+
+    html { font-feature-settings: "cv11", "ss01", "ss03"; }
+    body {
+      font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+      font-feature-settings: "rlig" 1, "calt" 1;
+      background: #fafafa;
+      color: var(--foreground);
+      -webkit-font-smoothing: antialiased;
+    }
+    @supports (font-variation-settings: normal) {
+      body { font-family: 'Inter var', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
+    }
+
+    /* Nav */
+    .nav-link {
+      display: inline-flex; align-items: center; gap: 0.4rem;
+      padding: 0.45rem 0.75rem; border-radius: calc(var(--radius) - 0.15rem);
+      color: var(--muted-foreground); font-weight: 500; font-size: 0.875rem;
+      transition: color 0.15s, background-color 0.15s;
+    }
+    .nav-link:hover { background: var(--accent); color: var(--foreground); }
+    .nav-link.active { background: var(--primary); color: var(--primary-foreground); }
+    .nav-link [data-lucide] { width: 16px; height: 16px; stroke-width: 2; }
+
+    /* Card — subtle shadow, thin border, larger radius */
+    .card {
+      background: var(--card);
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.03);
+    }
+
+    /* Metric labels — uppercase tracking */
+    .metric-label {
+      color: var(--muted-foreground);
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-weight: 600;
+    }
+    .metric-value {
+      font-size: 1.5rem; font-weight: 600; color: var(--foreground);
+      letter-spacing: -0.02em;
+    }
+
+    /* Tables */
+    table.jrnl { width: 100%; border-collapse: collapse; }
+    table.jrnl thead th {
+      text-align: left; font-weight: 500; font-size: 0.72rem;
+      color: var(--muted-foreground); text-transform: uppercase;
+      letter-spacing: 0.08em; padding: 0.75rem 1rem;
+      border-bottom: 1px solid var(--border); background: transparent;
+    }
+    table.jrnl tbody td {
+      padding: 0.75rem 1rem; border-bottom: 1px solid var(--border);
+      font-size: 0.875rem; color: var(--foreground);
+      white-space: nowrap;
+    }
+    table.jrnl thead th { white-space: nowrap; }
+    table.jrnl tbody tr:hover { background: var(--muted); }
+    table.jrnl tbody tr:last-child td { border-bottom: none; }
+
+    /* Pills — shadcn-style subtle badges */
+    .pill {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 2px 8px; font-size: 11px; font-weight: 500;
+      border-radius: 9999px; border: 1px solid transparent;
+    }
+
+    /* Buttons — black primary (shadcn signature), outline/ghost variants */
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 0.45rem;
+      padding: 0.5rem 0.9rem; border-radius: calc(var(--radius) - 0.1rem);
+      font-weight: 500; font-size: 0.875rem; line-height: 1;
+      border: 1px solid transparent;
+      transition: all 0.15s; cursor: pointer;
+      white-space: nowrap;
+    }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn [data-lucide] { width: 15px; height: 15px; stroke-width: 2; }
+    .btn-primary { background: var(--primary); color: var(--primary-foreground); }
+    .btn-primary:hover:not(:disabled) { background: rgb(39 39 42); } /* zinc-800 */
+    .btn-outline {
+      background: var(--card); color: var(--foreground);
+      border-color: var(--border);
+    }
+    .btn-outline:hover:not(:disabled) { background: var(--accent); }
+    .btn-ghost { color: var(--foreground); }
+    .btn-ghost:hover:not(:disabled) { background: var(--accent); }
+    .btn-danger { color: var(--destructive); }
+    .btn-danger:hover:not(:disabled) { background: #fef2f2; }
+
+    /* Inputs — focus ring, thin border */
+    input[type=text], input[type=number], input[type=date], input[type=email], select, textarea {
+      border: 1px solid var(--input);
+      border-radius: calc(var(--radius) - 0.1rem);
+      padding: 0.55rem 0.75rem;
+      font-size: 0.875rem; width: 100%;
+      background: var(--card); color: var(--foreground);
+      transition: border-color 0.15s, box-shadow 0.15s;
+      height: 2.4rem;
+    }
+    textarea { height: auto; min-height: 4.5rem; }
+    /* Custom select chevron (replaces native dropdown arrow) */
+    select {
+      appearance: none; -webkit-appearance: none;
+      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+      background-repeat: no-repeat;
+      background-position: right 0.65rem center;
+      padding-right: 2rem;
+    }
+    /* Card header block — shadcn pattern */
+    .card-header { padding: 1.25rem 1.5rem; border-bottom: 1px solid var(--border); }
+    .card-header.no-border { border-bottom: none; padding-bottom: 0; }
+    .card-title { font-size: 1rem; font-weight: 600; letter-spacing: -0.02em; color: var(--foreground); }
+    .card-description { font-size: 0.8rem; color: var(--muted-foreground); margin-top: 0.25rem; }
+    .card-body { padding: 1.25rem 1.5rem; }
+    .card-footer { padding: 1rem 1.5rem; border-top: 1px solid var(--border); display: flex; align-items: center; gap: 0.5rem; }
+    /* Section separators inside long forms */
+    .form-sep { height: 1px; background: var(--border); margin: 1.25rem 0; }
+    input:focus, select:focus, textarea:focus {
+      outline: none; border-color: var(--ring);
+      box-shadow: 0 0 0 3px rgb(24 24 27 / 0.1);
+    }
+    label {
+      font-size: 0.82rem; color: var(--foreground);
+      font-weight: 500; margin-bottom: 0.35rem; display: block;
+      letter-spacing: -0.005em;
+    }
+
+    /* Headings */
+    h1, h2, h3 { letter-spacing: -0.02em; }
+
+    [x-cloak] { display: none !important; }
+
+    /* Scrollbar polish */
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #d4d4d8; border-radius: 5px; border: 2px solid #fafafa; }
+    ::-webkit-scrollbar-thumb:hover { background: #a1a1aa; }
+  </style>
+</head>
+<body class="bg-zinc-50 text-zinc-900 min-h-screen">
+  {% set path = request.url.path %}
+  {% set qs = request.url.query %}
+  <nav class="bg-white border-b border-zinc-200 sticky top-0 z-30 backdrop-blur-xl bg-white/95">
+    <div class="mx-auto px-6 w-full py-3 flex items-center gap-1">
+      <a href="/dashboard" class="flex items-center gap-2 mr-5">
+        <img src="/static/logo.svg" alt="Trading Journal" class="w-8 h-8" />
+        <span class="hidden sm:inline text-base font-semibold tracking-tight">Trading Journal</span>
+      </a>
+
+      <a href="/dashboard" class="nav-link {% if path.startswith('/dashboard') or path == '/' %}active{% endif %}">
+        <i data-lucide="layout-dashboard"></i>Dashboard
+      </a>
+
+      <!-- Trades dropdown -->
+      <div class="relative" x-data="{ open: false }" @click.away="open = false">
+        <button type="button" @click="open = !open"
+                class="nav-link {% if path.startswith('/trades') and path != '/trades/new' %}active{% endif %}">
+          <i data-lucide="notebook-text"></i>Trades<i data-lucide="chevron-down" class="!w-3.5 !h-3.5 opacity-70"></i>
+        </button>
+        <div x-show="open" x-transition.opacity.duration.100ms x-cloak
+             class="absolute left-0 mt-1 w-56 bg-white border border-zinc-200 rounded-lg shadow-md py-1 text-sm z-40">
+          <a href="/trades?status=open" class="flex items-center gap-2 px-3 py-2 hover:bg-zinc-100 {% if path == '/trades' and 'status=open' in qs %}font-semibold{% endif %}">
+            <span class="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500"></span>Open trades
+          </a>
+          <a href="/trades?status=closed" class="flex items-center gap-2 px-3 py-2 hover:bg-zinc-100 {% if 'status=closed' in qs %}font-semibold{% endif %}">
+            <span class="inline-block w-1.5 h-1.5 rounded-full bg-zinc-400"></span>Closed trades
+          </a>
+          <a href="/trades?status=all" class="flex items-center gap-2 px-3 py-2 hover:bg-zinc-100 {% if 'status=all' in qs %}font-semibold{% endif %}">
+            <span class="inline-block w-1.5 h-1.5 rounded-full bg-zinc-900"></span>All trades
+          </a>
+          <div class="border-t border-zinc-100 my-1"></div>
+          <a href="/trades/new" class="flex items-center gap-2 px-3 py-2 hover:bg-zinc-100 font-medium">
+            <i data-lucide="plus" class="w-4 h-4"></i>Log new trade
+          </a>
+          <a href="/import" class="flex items-center gap-2 px-3 py-2 hover:bg-zinc-100 text-zinc-600">
+            <i data-lucide="upload" class="w-4 h-4"></i>Import tradebook
+          </a>
+        </div>
+      </div>
+
+      <a href="/trades/new" class="nav-link {% if path == '/trades/new' %}active{% endif %}">
+        <i data-lucide="plus"></i>New trade
+      </a>
+      <a href="/sizing" class="nav-link {% if path.startswith('/sizing') %}active{% endif %}">
+        <i data-lucide="scale"></i>Sizer
+      </a>
+      <a href="/breadth" class="nav-link {% if path.startswith('/breadth') %}active{% endif %}">
+        <i data-lucide="bar-chart-3"></i>Breadth
+      </a>
+
+      <div class="ml-auto flex items-center gap-1">
+        <!-- Kite status indicator -->
+        <div x-data='{ s: null, async load(){ try { const r = await fetch("/api/status"); if(r.ok) this.s = await r.json(); } catch(e){} } }' x-init="load()" class="hidden md:block">
+          <template x-if="s?.kite_authed">
+            <a href="/settings" class="nav-link" title="Connected to Zerodha Kite">
+              <span class="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500"></span>Kite
+            </a>
+          </template>
+          <template x-if="s && !s.kite_authed">
+            <a href="/auth/zerodha/login" class="nav-link" title="Not connected">
+              <span class="inline-block w-1.5 h-1.5 rounded-full bg-rose-500"></span>Connect Kite
+            </a>
+          </template>
+        </div>
+
+        <a href="/import" class="nav-link {% if path.startswith('/import') %}active{% endif %}">
+          <i data-lucide="upload"></i>Import
+        </a>
+        <a href="/masterlist" class="nav-link {% if path.startswith('/masterlist') %}active{% endif %}">
+          <i data-lucide="list"></i>Lists
+        </a>
+        <a href="/settings" class="nav-link {% if path.startswith('/settings') %}active{% endif %}">
+          <i data-lucide="settings"></i>Settings
+        </a>
+      </div>
+    </div>
+
+    <!-- Live status strip -->
+    <div class="border-t border-zinc-100 bg-zinc-50/70">
+      <div class="mx-auto px-6 w-full py-2 flex flex-wrap items-center gap-x-6 gap-y-1 text-xs"
+           x-data='{ s: null, loading: false,
+                     async load() { try { const r = await fetch("/api/status"); this.s = r.ok ? await r.json() : null; } catch(e) { this.s = null; } },
+                     inr(n) { if (n == null) return "—"; let s = Math.round(n).toString(); if (s.length > 3) { let last = s.slice(-3), rest = s.slice(0,-3), g=[]; while (rest.length>2){g.unshift(rest.slice(-2)); rest=rest.slice(0,-2);} if(rest)g.unshift(rest); s = g.join(",")+","+last; } return "₹"+s; },
+                     async refresh() { this.loading = true; try { await fetch("/prices/refresh", {method:"POST"}); await this.load(); } finally { this.loading = false; } }
+                   }'
+           x-init="load()">
+        <span class="flex items-center gap-1.5">
+          <i data-lucide="wallet" class="w-3.5 h-3.5 text-zinc-400"></i>
+          <span class="text-zinc-400">Capital</span>
+          <span class="font-semibold tabular-nums text-zinc-900" x-text="inr(s?.capital)"></span>
+        </span>
+        <span class="flex items-center gap-1.5">
+          <i data-lucide="layers" class="w-3.5 h-3.5 text-zinc-400"></i>
+          <span class="text-zinc-400">Open</span>
+          <a href="/trades?status=open" class="font-semibold tabular-nums text-zinc-900 hover:underline" x-text="s?.open_positions ?? '—'"></a>
+        </span>
+        <span x-show="s?.prices_last_refresh" class="text-zinc-500 flex items-center gap-1.5">
+          <i data-lucide="clock" class="w-3.5 h-3.5 text-zinc-400"></i>
+          <span class="text-zinc-400">Prices</span>
+          <span x-text="s?.prices_last_refresh ? new Date(s.prices_last_refresh + 'Z').toLocaleString([], {day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit'}) : ''"></span>
+        </span>
+        <button type="button" class="inline-flex items-center gap-1.5 text-zinc-700 hover:text-zinc-900" :disabled="loading" @click="refresh()">
+          <i data-lucide="refresh-cw" class="w-3.5 h-3.5" :class="loading ? 'animate-spin' : ''"></i>
+          <span x-text="loading ? 'Refreshing…' : 'Refresh prices'"></span>
+        </button>
+      </div>
+    </div>
+  </nav>
+  <main class="mx-auto px-6 w-full py-6">
+    {% block content %}{% endblock %}
+  </main>
+  <script>
+    // Initialise Lucide icons once on load and once more after Alpine has
+    // settled. Do NOT use a MutationObserver: lucide replaces [data-lucide]
+    // nodes with <svg> elements, which itself mutates the DOM and would
+    // trigger an infinite loop.
+    function hydrateIcons() { if (window.lucide) window.lucide.createIcons(); }
+    document.addEventListener('DOMContentLoaded', () => {
+      hydrateIcons();
+      // Give Alpine a beat to render any x-if / x-show content.
+      setTimeout(hydrateIcons, 100);
+      setTimeout(hydrateIcons, 500);
+    });
+    // Re-hydrate after HTMX swaps in new HTML.
+    document.body.addEventListener('htmx:afterSwap', hydrateIcons);
+  </script>
+</body>
+</html>

@@ -1,0 +1,410 @@
+{% extends "base.html" %}
+{% block title %}{{ trade.instrument }} · Trading Journal{% endblock %}
+{% block content %}
+
+<div class="flex items-start justify-between mb-6">
+  <div>
+    <div class="flex items-center gap-3 mb-1">
+      <a href="/trades" class="text-zinc-500 hover:text-zinc-700 text-sm">← Trades</a>
+    </div>
+    <div class="flex items-center gap-3">
+      <h1 class="text-2xl font-bold">{{ trade.instrument }}</h1>
+      {% if trade.side == 'B' %}
+        <span class="pill bg-emerald-100 text-emerald-800">Long</span>
+      {% else %}
+        <span class="pill bg-rose-100 text-rose-800">Short</span>
+      {% endif %}
+      {% if trade.status == 'open' %}
+        <span class="pill bg-amber-100 text-amber-800">Open</span>
+      {% else %}
+        <span class="pill bg-zinc-200 text-zinc-700">Closed</span>
+      {% endif %}
+      {% if trade.setup %}<span class="text-zinc-500 text-sm">· {{ trade.setup }}</span>{% endif %}
+    </div>
+    <p class="text-zinc-500 text-sm mt-1">
+      Entered on {{ trade.entry_date | dtfmt }}
+      {% if trade.close_date %} · closed on {{ trade.close_date | dtfmt }}{% endif %}
+    </p>
+  </div>
+  <div class="flex items-center gap-2">
+    <a href="/trades/{{ trade.id }}/edit" class="btn btn-primary">Edit trade</a>
+    <form method="post" action="/trades/{{ trade.id }}/delete"
+          onsubmit="return confirm('Delete this trade permanently?');">
+      <button class="btn btn-danger">Delete</button>
+    </form>
+  </div>
+</div>
+
+<!-- Metrics -->
+<div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 mb-6">
+  <div class="card p-4"><div class="metric-label">Avg entry</div><div class="metric-value">{{ m.avg_entry | num }}</div></div>
+  <div class="card p-4"><div class="metric-label">Avg exit</div><div class="metric-value">{% if m.avg_exit is not none %}{{ m.avg_exit | num }}{% else %}—{% endif %}</div></div>
+  <div class="card p-4"><div class="metric-label">Qty (open/total)</div><div class="metric-value">{{ m.open_qty }} <span class="text-zinc-400 text-lg">/ {{ m.total_qty }}</span></div></div>
+  <div class="card p-4">
+    <div class="metric-label">Move</div>
+    <div class="metric-value {{ m.stock_move_pct | pnl_color if m.stock_move_pct is not none else '' }}">
+      {% if m.stock_move_pct is not none %}{{ m.stock_move_pct | pct_signed }}{% else %}—{% endif %}
+    </div>
+  </div>
+  <div class="card p-4">
+    <div class="metric-label">Net P/L <span class="text-[10px] text-zinc-400">(after charges)</span></div>
+    <div class="metric-value {{ net_pnl_rs | pnl_color }}">{% if net_pnl_rs %}{{ net_pnl_rs | inr_signed }}{% else %}—{% endif %}</div>
+    <div class="text-xs text-zinc-500 mt-1">
+      Gross {% if m.pnl_rs %}{{ m.pnl_rs | inr_signed }}{% else %}—{% endif %}
+      · Charges {{ charges_rs | inr }}{% if charges_is_estimate %} <span class="text-zinc-400" title="Blank on the trade — estimated from turnover">(est.)</span>{% endif %}
+    </div>
+  </div>
+  <div class="card p-4"><div class="metric-label">R:R</div><div class="metric-value">{% if m.reward_risk is not none %}{{ "%.2f" | format(m.reward_risk) }}R{% else %}—{% endif %}</div></div>
+  <div class="card p-4"><div class="metric-label">Position size</div><div class="metric-value">{{ m.position_size_rs | inr }}</div></div>
+  <div class="card p-4"><div class="metric-label">SL distance</div><div class="metric-value">{% if m.sl_pct %}{{ m.sl_pct | pct }}{% else %}—{% endif %}</div></div>
+  <div class="card p-4"><div class="metric-label">Holding days</div><div class="metric-value">{{ m.holding_days }}</div></div>
+  <div class="card p-4"><div class="metric-label">Open heat</div><div class="metric-value">{{ m.open_heat_rs | inr }}</div></div>
+  <div class="card p-4"><div class="metric-label">Realised</div><div class="metric-value">{{ m.realised_amount | inr }}</div></div>
+  <div class="card p-4"><div class="metric-label">Portfolio impact</div><div class="metric-value {{ pf_impact | pnl_color }}">{% if pf_impact %}{{ pf_impact | pct_signed(2) }}{% else %}—{% endif %}</div></div>
+</div>
+
+<!-- ============= Chart + What-if (Sprint 4) ============= -->
+<div class="card p-4 mb-6"
+     x-data='{
+       data: null,
+       loading: true,
+       error: null,
+       inr(n) {
+         if (n == null) return "—";
+         const neg = n < 0 ? "-" : n > 0 ? "+" : "";
+         n = Math.abs(Math.round(n));
+         let s = n.toString();
+         if (s.length > 3) {
+           const last3 = s.slice(-3); let rest = s.slice(0,-3), g=[];
+           while (rest.length>2){ g.unshift(rest.slice(-2)); rest=rest.slice(0,-2); }
+           if (rest) g.unshift(rest);
+           s = g.join(",") + "," + last3;
+         }
+         return neg + "₹" + s;
+       },
+       async load() {
+         try {
+           const r = await fetch("/trades/{{ trade.id }}/chart-data");
+           if (!r.ok) throw new Error(r.status);
+           this.data = await r.json();
+           this.drawChart();
+         } catch (e) { this.error = "Could not load chart data."; }
+         finally { this.loading = false; }
+       },
+       drawChart() {
+         if (!this.data || !this.data.bars || !this.data.bars.length) {
+           this.error = "No OHLC data available for this symbol.";
+           return;
+         }
+         const d = this.data;
+         const labels = d.bars.map(b => b.date);
+         const closes = d.bars.map(b => b.close);
+         const slLine = labels.map(() => d.sl);
+         const entryLine = labels.map(() => d.avg_entry);
+         const tslLine = d.tsl ? labels.map(() => d.tsl) : null;
+         const entryPoints = d.entries.map(e => ({ x: e.date, y: e.price, label: e.label, kind: e.kind }));
+         const exitPoints = d.exits.map(e => ({ x: e.date, y: e.price, label: e.label }));
+
+         const ctx = this.$refs.chart.getContext("2d");
+         new Chart(ctx, {
+           type: "line",
+           data: {
+             labels,
+             datasets: [
+               { label: "Close", data: closes, borderColor: "#334155", backgroundColor: "rgba(51,65,85,0.04)", tension: 0.2, fill: true, pointRadius: 0, borderWidth: 1.5 },
+               { label: "Avg entry", data: entryLine, borderColor: "#18181b", borderDash: [6,4], pointRadius: 0, borderWidth: 1, fill: false },
+               { label: "SL", data: slLine, borderColor: "#f43f5e", borderDash: [2,3], pointRadius: 0, borderWidth: 1, fill: false },
+               ...(tslLine ? [{ label: "TSL", data: tslLine, borderColor: "#f59e0b", borderDash: [2,3], pointRadius: 0, borderWidth: 1, fill: false }] : []),
+               { label: "Entries", data: entryPoints, type: "scatter", backgroundColor: "#059669", pointRadius: 6, pointStyle: "triangle", rotation: 0, showLine: false },
+               { label: "Exits", data: exitPoints, type: "scatter", backgroundColor: "#e11d48", pointRadius: 6, pointStyle: "triangle", rotation: 180, showLine: false },
+             ]
+           },
+           options: {
+             responsive: true,
+             interaction: { mode: "nearest", intersect: false },
+             plugins: {
+               legend: { position: "bottom", labels: { boxWidth: 12, font: { size: 11 } } },
+               tooltip: {
+                 callbacks: {
+                   title: (items) => items[0]?.label || "",
+                   label: (item) => {
+                     const p = item.raw;
+                     if (p?.label) return p.label;
+                     return `${item.dataset.label}: ₹${item.parsed.y}`;
+                   }
+                 }
+               }
+             },
+             scales: {
+               x: { ticks: { maxTicksLimit: 10, font: { size: 10 } }, grid: { display: false } },
+               y: { ticks: { callback: (v) => "₹" + v, font: { size: 10 } } }
+             }
+           }
+         });
+       }
+     }' x-init="load()">
+  <h3 class="font-semibold mb-1">Price history &amp; executions</h3>
+  <p class="text-xs text-zinc-500 mb-3">Entry/exits overlaid on OHLC (~25 trading days around the trade window).</p>
+  <div x-show="loading" class="text-sm text-zinc-500 py-8 text-center">Loading chart…</div>
+  <div x-show="error" x-text="error" class="text-sm text-rose-600 py-8 text-center"></div>
+  <canvas x-ref="chart" x-show="!loading && !error" height="140"></canvas>
+</div>
+
+<!-- What-if post-mortem -->
+<div class="card mb-6"
+     x-data="{ wi: null, async load(){ try { const r = await fetch('/trades/{{ trade.id }}/chart-data'); if (r.ok) { const d = await r.json(); this.wi = d.what_if; } } catch(e){} } }"
+     x-init="load()">
+  <div class="px-4 py-3 border-b border-zinc-200">
+    <h3 class="font-semibold">What-if post-mortem</h3>
+    <p class="text-xs text-zinc-500 mt-1">If you'd taken different exits in the {{ m.holding_days }}-day window.</p>
+  </div>
+  <template x-if="!wi || !wi.has_data">
+    <div class="p-6 text-sm text-zinc-500 text-center">Not enough OHLC data to compute. Chart needs to load first.</div>
+  </template>
+  <template x-if="wi && wi.has_data">
+    <div class="grid md:grid-cols-4 gap-0 divide-y md:divide-y-0 md:divide-x divide-zinc-100">
+      <div class="p-4">
+        <div class="metric-label">You realised</div>
+        <div class="text-2xl font-bold tabular-nums" :class="wi.pnl_realised >= 0 ? 'text-emerald-600' : 'text-rose-600'" x-text="inr(wi.pnl_realised)">—</div>
+        <div class="text-xs text-zinc-500 mt-1">
+          <span x-text="wi.realised_r !== null ? (wi.realised_r >= 0 ? '+' : '') + wi.realised_r.toFixed(2) + 'R' : '—'"></span>
+        </div>
+      </div>
+      <div class="p-4">
+        <div class="metric-label">If held to peak (MFE)</div>
+        <div class="text-2xl font-bold tabular-nums text-emerald-600" x-text="inr(wi.pnl_if_held_mfe)">—</div>
+        <div class="text-xs text-zinc-500 mt-1">
+          ₹<span x-text="wi.mfe_price"></span> on <span x-text="wi.mfe_date"></span>
+          · <span x-text="wi.mfe_r !== null ? '+' + wi.mfe_r.toFixed(2) + 'R' : '—'"></span>
+        </div>
+      </div>
+      <div class="p-4">
+        <div class="metric-label">If you'd hit 3R target</div>
+        <div class="text-2xl font-bold tabular-nums text-zinc-700" x-text="inr(wi.pnl_if_hit_3r)">—</div>
+        <div class="text-xs text-zinc-500 mt-1">Target = entry + 3 × planned risk</div>
+      </div>
+      <div class="p-4">
+        <div class="metric-label">If SL had hit</div>
+        <div class="text-2xl font-bold tabular-nums text-rose-600" x-text="inr(wi.pnl_if_hit_sl)">—</div>
+        <div class="text-xs text-zinc-500 mt-1">
+          MAE ₹<span x-text="wi.mae_price"></span>
+          · <span x-text="wi.mae_r !== null ? wi.mae_r.toFixed(2) + 'R' : '—'"></span>
+          <span x-show="wi.mae_tested_sl" class="text-amber-700 font-semibold ml-1">· SL was tested</span>
+        </div>
+      </div>
+      <div class="p-4 md:col-span-4 border-t border-zinc-100" x-show="wi.pnl_left_on_table !== null">
+        <div class="flex items-baseline gap-2 text-sm">
+          <span class="text-zinc-500">Left on table:</span>
+          <span class="font-semibold tabular-nums" :class="wi.pnl_left_on_table > 0 ? 'text-amber-700' : 'text-zinc-500'" x-text="inr(wi.pnl_left_on_table)"></span>
+          <span class="text-xs text-zinc-500">
+            = MFE P/L − your realised. Positive = you exited early relative to the swing.
+          </span>
+        </div>
+      </div>
+    </div>
+  </template>
+</div>
+
+<div class="grid lg:grid-cols-3 gap-6">
+
+  <!-- Left column: entries & exits -->
+  <div class="lg:col-span-2 space-y-6">
+
+    <!-- Live update -->
+    {% if trade.status == 'open' %}
+    <div class="card p-4">
+      <h3 class="font-semibold mb-3">Live update</h3>
+      <form method="post" action="/trades/{{ trade.id }}/update-live" class="grid grid-cols-2 md:grid-cols-4 gap-3 items-end">
+        <div><label>CMP</label><input type="number" step="any" name="cmp_price" value="{{ ('%.2f' | format(trade.cmp)) if trade.cmp is not none else '' }}"></div>
+        <div><label>TSL</label><input type="number" step="any" name="tsl" value="{{ ('%.2f' | format(trade.tsl)) if trade.tsl is not none else '' }}"></div>
+        <div><label>SL</label><input type="number" step="any" name="sl" value="{{ '%.2f' | format(trade.sl) }}"></div>
+        <div><button class="btn btn-primary w-full justify-center">Update</button></div>
+      </form>
+    </div>
+    {% endif %}
+
+    <!-- Entries (initial + pyramids) -->
+    <div class="card">
+      <div class="flex items-center justify-between px-4 py-3 border-b border-zinc-200">
+        <h3 class="font-semibold">Entries</h3>
+      </div>
+      <table class="jrnl">
+        <thead><tr><th>Leg</th><th>Date</th><th class="text-right">Price</th><th class="text-right">Qty</th><th class="text-right">Amount</th><th></th></tr></thead>
+        <tbody>
+          <tr>
+            <td><span class="pill bg-zinc-100 text-zinc-900">Initial</span></td>
+            <td>{{ trade.entry_date | shortdate }}</td>
+            <td class="text-right tabular-nums">{{ trade.initial_entry_price | num }}</td>
+            <td class="text-right tabular-nums">{{ trade.initial_qty }}</td>
+            <td class="text-right tabular-nums">{{ (trade.initial_entry_price * trade.initial_qty) | inr }}</td>
+            <td></td>
+          </tr>
+          {% for p in trade.pyramids %}
+          <tr x-data="{ edit: false }">
+            <td><span class="pill bg-blue-100 text-blue-800">Pyramid {{ p.sequence }}</span></td>
+            <td>
+              <span x-show="!edit">{{ p.date | shortdate }}</span>
+              <input x-show="edit" form="edit-py-{{ p.id }}" type="date" name="pyramid_date" value="{{ p.date.isoformat() }}">
+            </td>
+            <td class="text-right tabular-nums">
+              <span x-show="!edit">{{ p.price | num }}</span>
+              <input x-show="edit" form="edit-py-{{ p.id }}" type="number" step="0.01" name="price" value="{{ p.price }}" class="text-right">
+            </td>
+            <td class="text-right tabular-nums">
+              <span x-show="!edit">{{ p.qty }}</span>
+              <input x-show="edit" form="edit-py-{{ p.id }}" type="number" name="qty" value="{{ p.qty }}" class="text-right">
+            </td>
+            <td class="text-right tabular-nums" x-show="!edit">{{ (p.price * p.qty) | inr }}</td>
+            <td class="text-right tabular-nums" x-show="edit"><span class="text-zinc-400 text-xs">auto</span></td>
+            <td class="text-right whitespace-nowrap">
+              <template x-if="!edit">
+                <div class="flex gap-2 justify-end items-center">
+                  <button type="button" @click="edit = true" class="text-zinc-900 text-xs hover:underline">Edit</button>
+                  <form method="post" action="/trades/{{ trade.id }}/pyramid/{{ p.id }}/delete" onsubmit="return confirm('Remove this pyramid entry?');">
+                    <button class="text-rose-600 text-xs hover:underline">Remove</button>
+                  </form>
+                </div>
+              </template>
+              <template x-if="edit">
+                <div class="flex gap-2 justify-end items-center">
+                  <form id="edit-py-{{ p.id }}" method="post" action="/trades/{{ trade.id }}/pyramid/{{ p.id }}/edit"></form>
+                  <button type="submit" form="edit-py-{{ p.id }}" class="text-emerald-600 text-xs hover:underline font-semibold">Save</button>
+                  <button type="button" @click="edit = false" class="text-zinc-500 text-xs hover:underline">Cancel</button>
+                </div>
+              </template>
+            </td>
+          </tr>
+          {% endfor %}
+          {% if m.open_qty > 0 %}
+          <tr>
+            <td colspan="6" class="bg-zinc-50">
+              <form method="post" action="/trades/{{ trade.id }}/pyramid" class="grid grid-cols-2 md:grid-cols-4 gap-3 items-end">
+                <div><label>Pyramid price</label><input type="number" step="0.01" name="price" required></div>
+                <div><label>Qty</label><input type="number" name="qty" required></div>
+                <div><label>Date</label><input type="date" name="pyramid_date" value="{{ today }}" required></div>
+                <div><button class="btn btn-primary w-full justify-center">+ Add pyramid</button></div>
+              </form>
+            </td>
+          </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Exits -->
+    <div class="card">
+      <div class="flex items-center justify-between px-4 py-3 border-b border-zinc-200">
+        <h3 class="font-semibold">Exits</h3>
+        <div class="text-xs text-zinc-500">Remaining qty: <strong>{{ m.open_qty }}</strong></div>
+      </div>
+      <table class="jrnl">
+        <thead><tr><th>Leg</th><th>Date</th><th class="text-right">Price</th><th class="text-right">Qty</th><th class="text-right">Amount</th><th></th></tr></thead>
+        <tbody>
+          {% for e in trade.exits %}
+          <tr x-data="{ edit: false }">
+            <td><span class="pill bg-zinc-100 text-zinc-700">Exit {{ e.sequence }}</span></td>
+            <td>
+              <span x-show="!edit">{{ e.date | shortdate }}</span>
+              <input x-show="edit" form="edit-ex-{{ e.id }}" type="date" name="exit_date" value="{{ e.date.isoformat() }}">
+            </td>
+            <td class="text-right tabular-nums">
+              <span x-show="!edit">{{ e.price | num }}</span>
+              <input x-show="edit" form="edit-ex-{{ e.id }}" type="number" step="0.01" name="price" value="{{ e.price }}" class="text-right">
+            </td>
+            <td class="text-right tabular-nums">
+              <span x-show="!edit">{{ e.qty }}</span>
+              <input x-show="edit" form="edit-ex-{{ e.id }}" type="number" name="qty" value="{{ e.qty }}" class="text-right">
+            </td>
+            <td class="text-right tabular-nums" x-show="!edit">{{ (e.price * e.qty) | inr }}</td>
+            <td class="text-right tabular-nums" x-show="edit"><span class="text-zinc-400 text-xs">auto</span></td>
+            <td class="text-right whitespace-nowrap">
+              <template x-if="!edit">
+                <div class="flex gap-2 justify-end items-center">
+                  <button type="button" @click="edit = true" class="text-zinc-900 text-xs hover:underline">Edit</button>
+                  <form method="post" action="/trades/{{ trade.id }}/exit/{{ e.id }}/delete" onsubmit="return confirm('Remove this exit?');">
+                    <button class="text-rose-600 text-xs hover:underline">Remove</button>
+                  </form>
+                </div>
+              </template>
+              <template x-if="edit">
+                <div class="flex gap-2 justify-end items-center">
+                  <form id="edit-ex-{{ e.id }}" method="post" action="/trades/{{ trade.id }}/exit/{{ e.id }}/edit"></form>
+                  <button type="submit" form="edit-ex-{{ e.id }}" class="text-emerald-600 text-xs hover:underline font-semibold">Save</button>
+                  <button type="button" @click="edit = false" class="text-zinc-500 text-xs hover:underline">Cancel</button>
+                </div>
+              </template>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6" class="text-center text-zinc-400 py-4">No exits yet</td></tr>
+          {% endfor %}
+          {% if m.open_qty > 0 %}
+          <tr>
+            <td colspan="6" class="bg-zinc-50">
+              <form method="post" action="/trades/{{ trade.id }}/exit" class="grid grid-cols-2 md:grid-cols-4 gap-3 items-end">
+                <div><label>Exit price</label><input type="number" step="0.01" name="price" required></div>
+                <div><label>Qty (max {{ m.open_qty }})</label><input type="number" name="qty" max="{{ m.open_qty }}" required></div>
+                <div><label>Date</label><input type="date" name="exit_date" value="{{ today }}" required></div>
+                <div><button class="btn btn-primary w-full justify-center">+ Book exit</button></div>
+              </form>
+            </td>
+          </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Right column: review -->
+  <div class="space-y-6">
+    <div class="card p-4">
+      <h3 class="font-semibold mb-3">Post-trade review</h3>
+      {% if m.exited_qty > 0 %}
+      <form method="post" action="/trades/{{ trade.id }}/review" class="space-y-4">
+        <div>
+          <label>Plan followed?</label>
+          <div class="flex gap-2">
+            <label class="flex-1 cursor-pointer">
+              <input type="radio" name="plan_followed" value="yes" class="peer sr-only" {% if trade.plan_followed == true %}checked{% endif %}>
+              <div class="text-center py-2 border border-zinc-300 rounded-lg peer-checked:bg-emerald-50 peer-checked:border-emerald-500 peer-checked:text-emerald-700 font-medium text-sm">Yes</div>
+            </label>
+            <label class="flex-1 cursor-pointer">
+              <input type="radio" name="plan_followed" value="no" class="peer sr-only" {% if trade.plan_followed == false %}checked{% endif %}>
+              <div class="text-center py-2 border border-zinc-300 rounded-lg peer-checked:bg-rose-50 peer-checked:border-rose-500 peer-checked:text-rose-700 font-medium text-sm">No</div>
+            </label>
+          </div>
+        </div>
+        <div>
+          <label>Exit trigger</label>
+          <select name="exit_trigger">
+            <option value="">— Choose —</option>
+            {% for v in dropdowns.exit_trigger %}<option {% if trade.exit_trigger == v %}selected{% endif %}>{{ v }}</option>{% endfor %}
+          </select>
+        </div>
+        <div>
+          <label>Proficiency (what went well)</label>
+          <select name="proficiency" multiple size="5">
+            {% for v in dropdowns.proficiency %}<option {% if trade.proficiency and v in trade.proficiency %}selected{% endif %}>{{ v }}</option>{% endfor %}
+          </select>
+          <p class="text-xs text-zinc-500 mt-1">Hold Cmd/Ctrl to select multiple</p>
+        </div>
+        <div>
+          <label>Growth areas (what to improve)</label>
+          <select name="growth_areas" multiple size="5">
+            {% for v in dropdowns.growth_area %}<option {% if trade.growth_areas and v in trade.growth_areas %}selected{% endif %}>{{ v }}</option>{% endfor %}
+          </select>
+        </div>
+        <div>
+          <label>Observations</label>
+          <textarea name="observations" rows="3">{{ trade.observations or '' }}</textarea>
+        </div>
+        <button class="btn btn-primary w-full justify-center">Save review</button>
+      </form>
+      {% else %}
+      <p class="text-sm text-zinc-500">Review unlocks once you book your first exit.</p>
+      {% endif %}
+    </div>
+  </div>
+
+</div>
+{% endblock %}

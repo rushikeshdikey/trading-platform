@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% block title %}Edit {{ trade.instrument }} · Trading Journal{% endblock %}
+{% block content %}
+<div class="max-w-5xl mx-auto">
+  <div class="mb-6 flex items-center justify-between">
+    <div>
+      <a href="/trades/{{ trade.id }}" class="inline-flex items-center gap-1 text-zinc-500 hover:text-zinc-900 text-sm">
+        <i data-lucide="arrow-left" class="w-4 h-4"></i>Back to trade
+      </a>
+      <h1 class="text-2xl font-semibold tracking-tight mt-1">Edit {{ trade.instrument }}</h1>
+      <p class="text-zinc-500 text-sm mt-1">Tune any field — entry, SL, setup, charges. Saved immediately.</p>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="pill {% if trade.side == 'B' %}bg-emerald-50 text-emerald-700 border-emerald-200{% else %}bg-rose-50 text-rose-700 border-rose-200{% endif %}">
+        {% if trade.side == 'B' %}Long{% else %}Short{% endif %}
+      </span>
+      <span class="pill {% if trade.status == 'open' %}bg-amber-50 text-amber-700 border-amber-200{% else %}bg-zinc-100 text-zinc-700 border-zinc-200{% endif %}">
+        {{ trade.status | capitalize }}
+      </span>
+    </div>
+  </div>
+
+  <form method="post" action="/trades/{{ trade.id }}/edit" class="space-y-6">
+
+    <!-- Core details card -->
+    <div class="card">
+      <div class="card-header">
+        <div class="flex items-center gap-2">
+          <i data-lucide="file-text" class="w-4 h-4 text-zinc-500"></i>
+          <div class="card-title">Core details</div>
+        </div>
+        <div class="card-description">Instrument, direction, entry, and stop.</div>
+      </div>
+      <div class="card-body grid md:grid-cols-2 gap-5">
+        <div>
+          <label>Instrument</label>
+          <input type="text" name="instrument" value="{{ trade.instrument }}" required
+                 style="text-transform: uppercase;">
+          <p class="text-xs text-zinc-500 mt-1.5">Rename any imported BSE/ISIN code to a proper ticker.</p>
+        </div>
+        <div>
+          <label>Entry date</label>
+          <input type="date" name="entry_date" value="{{ trade.entry_date.isoformat() }}" required>
+        </div>
+
+        <div>
+          <label>Direction</label>
+          <div class="inline-flex rounded-lg border border-zinc-200 p-0.5 bg-zinc-50 w-full">
+            <label class="flex-1 cursor-pointer">
+              <input type="radio" name="side" value="B" class="peer sr-only" {% if trade.side == 'B' %}checked{% endif %}>
+              <div class="text-center py-1.5 text-sm rounded-md font-medium text-zinc-500 peer-checked:bg-white peer-checked:text-emerald-700 peer-checked:shadow-sm transition">Long</div>
+            </label>
+            <label class="flex-1 cursor-pointer">
+              <input type="radio" name="side" value="S" class="peer sr-only" {% if trade.side == 'S' %}checked{% endif %}>
+              <div class="text-center py-1.5 text-sm rounded-md font-medium text-zinc-500 peer-checked:bg-white peer-checked:text-rose-700 peer-checked:shadow-sm transition">Short</div>
+            </label>
+          </div>
+        </div>
+        <div>
+          <label>Setup</label>
+          <select name="setup">
+            <option value="">— None —</option>
+            {% for s in dropdowns.setup %}<option {% if trade.setup == s %}selected{% endif %}>{{ s }}</option>{% endfor %}
+          </select>
+        </div>
+
+        <div>
+          <label>Entry price</label>
+          <input type="number" step="0.01" name="entry_price" value="{{ trade.initial_entry_price }}" required>
+        </div>
+        <div>
+          <label>Initial quantity</label>
+          <input type="number" name="initial_qty" value="{{ trade.initial_qty }}" required>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stop management card -->
+    <div class="card">
+      <div class="card-header">
+        <div class="flex items-center gap-2">
+          <i data-lucide="shield-alert" class="w-4 h-4 text-zinc-500"></i>
+          <div class="card-title">Stop management</div>
+        </div>
+        <div class="card-description">SL is your planned exit; TSL trails as the trade moves in your favour.</div>
+      </div>
+      <div class="card-body grid md:grid-cols-3 gap-5">
+        <div>
+          <label>Stop loss (SL)</label>
+          <input type="number" step="0.01" name="sl" value="{{ trade.sl }}" required>
+        </div>
+        <div>
+          <label>Trailing stop (TSL)</label>
+          <input type="number" step="0.01" name="tsl" value="{{ trade.tsl or '' }}" placeholder="Optional">
+        </div>
+        <div>
+          <label>CMP</label>
+          <input type="number" step="any" name="cmp_price" value="{{ ('%.2f' | format(trade.cmp)) if trade.cmp is not none else '' }}" placeholder="Last known market price">
+        </div>
+      </div>
+    </div>
+
+    <!-- Costs + metadata card -->
+    <div class="card">
+      <div class="card-header">
+        <div class="flex items-center gap-2">
+          <i data-lucide="receipt" class="w-4 h-4 text-zinc-500"></i>
+          <div class="card-title">Costs &amp; metadata</div>
+        </div>
+        <div class="card-description">Brokerage &amp; taxes, plus base classification and F&amp;O fields.</div>
+      </div>
+      <div class="card-body grid md:grid-cols-2 gap-5">
+        <div>
+          <label>Charges (₹)</label>
+          <input type="number" step="0.01" name="charges_rs" value="{{ ('%.2f' | format(trade.charges_rs)) if trade.charges_rs is not none else '' }}" placeholder="Leave blank to auto-estimate">
+          <p class="text-xs text-zinc-500 mt-1.5">STT + brokerage + exchange + SEBI + stamp + GST + DP. Blank = auto-estimate from turnover.</p>
+        </div>
+        <div>
+          <label>Base duration</label>
+          <select name="base_duration">
+            <option value="">— None —</option>
+            {% for d in dropdowns.base_duration %}<option {% if trade.base_duration == d %}selected{% endif %}>{{ d }}</option>{% endfor %}
+          </select>
+        </div>
+
+        <div>
+          <label>Strike (F&amp;O only)</label>
+          <input type="number" step="0.01" name="strike" value="{{ trade.strike or '' }}" placeholder="—">
+        </div>
+        <div>
+          <label>Option type (F&amp;O only)</label>
+          <select name="option_type">
+            <option value="">— None —</option>
+            <option value="CE" {% if trade.option_type == 'CE' %}selected{% endif %}>CE</option>
+            <option value="PE" {% if trade.option_type == 'PE' %}selected{% endif %}>PE</option>
+            <option value="FUT" {% if trade.option_type == 'FUT' %}selected{% endif %}>FUT</option>
+          </select>
+        </div>
+
+        <div class="md:col-span-2">
+          <label>Observations</label>
+          <textarea name="observations" rows="3" placeholder="Any notes, thesis, or context…">{{ trade.observations or '' }}</textarea>
+        </div>
+      </div>
+      <div class="card-footer justify-end">
+        <a href="/trades/{{ trade.id }}" class="btn btn-outline">Cancel</a>
+        <button type="submit" class="btn btn-primary">
+          <i data-lucide="check" class="w-4 h-4"></i>Save changes
+        </button>
+      </div>
+    </div>
+  </form>
+</div>
+{% endblock %}

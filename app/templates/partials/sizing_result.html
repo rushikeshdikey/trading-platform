@@ -1,0 +1,29 @@
+<div class="grid md:grid-cols-2 gap-6">
+  <div class="card p-6 border-l-4 border-zinc-900">
+    <div class="text-xs uppercase tracking-wide text-zinc-900 font-bold mb-1">Risk-based</div>
+    <h3 class="text-lg font-semibold mb-4">Size so a stopped-out trade loses at most {{ "%g"|format(risk_pct) }}% of capital</h3>
+    <div class="text-4xl font-bold mb-2">{{ result_risk.qty }}<span class="text-lg font-normal text-zinc-500"> shares</span></div>
+    <div class="grid grid-cols-2 gap-3 mt-6 text-sm">
+      <div><div class="metric-label">Entry</div><div class="font-semibold">₹{{ entry | num }}</div></div>
+      <div><div class="metric-label">SL price</div><div class="font-semibold">₹{{ sl_price | num }}</div></div>
+      <div><div class="metric-label">Risk ₹</div><div class="font-semibold">{{ result_risk.risk_rs | inr }}</div></div>
+      <div><div class="metric-label">Per-share risk</div><div class="font-semibold">₹{{ result_risk.risk_per_share | num }}</div></div>
+      <div><div class="metric-label">Position size</div><div class="font-semibold">{{ result_risk.position_size_rs | inr }}</div></div>
+      <div><div class="metric-label">Allocation</div><div class="font-semibold">{{ "%.2f"|format(result_risk.allocation_pct * 100) }}%</div></div>
+    </div>
+  </div>
+
+  <div class="card p-6 border-l-4 border-emerald-500">
+    <div class="text-xs uppercase tracking-wide text-emerald-600 font-bold mb-1">Allocation-based</div>
+    <h3 class="text-lg font-semibold mb-4">Size to allocate {{ "%g"|format(alloc_pct) }}% of capital to this position</h3>
+    <div class="text-4xl font-bold mb-2">{{ result_alloc.qty }}<span class="text-lg font-normal text-zinc-500"> shares</span></div>
+    <div class="grid grid-cols-2 gap-3 mt-6 text-sm">
+      <div><div class="metric-label">Entry</div><div class="font-semibold">₹{{ entry | num }}</div></div>
+      <div><div class="metric-label">SL price</div><div class="font-semibold">₹{{ sl_price | num }}</div></div>
+      <div><div class="metric-label">Allocated ₹</div><div class="font-semibold">{{ result_alloc.allocated_rs | inr }}</div></div>
+      <div><div class="metric-label">Position size</div><div class="font-semibold">{{ result_alloc.position_size_rs | inr }}</div></div>
+      <div><div class="metric-label">SL distance</div><div class="font-semibold">{{ "%.2f"|format(result_alloc.sl_pct * 100) }}%</div></div>
+      <div><div class="metric-label">Risk ₹ (if SL hits)</div><div class="font-semibold">{{ result_alloc.risk_rs | inr }}</div></div>
+    </div>
+  </div>
+</div>

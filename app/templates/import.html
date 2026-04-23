@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Import · Trading Journal{% endblock %}
+{% block content %}
+<div class="max-w-3xl mx-auto space-y-6">
+  <div>
+    <h1 class="text-2xl font-bold">Import from Excel</h1>
+    <p class="text-zinc-500 text-sm mt-1">Bring trades from your existing Google Sheets / Excel journal. This replaces any trades already in the app.</p>
+  </div>
+
+  {% set imported = request.query_params.get('imported') %}
+  {% set skipped = request.query_params.get('skipped') %}
+  {% if imported is not none %}
+  <div class="p-4 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800">
+    Imported <strong>{{ imported }}</strong> trade{{ 's' if imported != '1' else '' }}{% if skipped and skipped != '0' %}, skipped {{ skipped }} empty/invalid row{{ 's' if skipped != '1' else '' }}{% endif %}.
+    <a href="/dashboard" class="font-semibold underline">See dashboard</a>.
+  </div>
+  {% endif %}
+
+  <div class="card p-6">
+    <h3 class="font-semibold mb-2">Option 1 — use the xlsx already in the repo</h3>
+    {% if repo_file_exists %}
+      <p class="text-sm text-zinc-600 mb-4">Detected: <code class="text-xs bg-zinc-100 px-2 py-0.5 rounded">{{ repo_file_name }}</code></p>
+      <form method="post" action="/import/from-repo" onsubmit="return confirm('This will replace all existing trades. Continue?');">
+        <button class="btn btn-primary">Import from repo file</button>
+      </form>
+    {% else %}
+      <p class="text-sm text-zinc-500">No xlsx found next to the app. Use option 2 below.</p>
+    {% endif %}
+  </div>
+
+  <div class="card p-6">
+    <h3 class="font-semibold mb-2">Option 2 — upload an xlsx</h3>
+    <p class="text-sm text-zinc-600 mb-4">Any Excel file following the same <code class="text-xs bg-zinc-100 px-2 py-0.5 rounded">DTrades</code> layout.</p>
+    <form method="post" action="/import/upload" enctype="multipart/form-data" class="flex items-end gap-3"
+          onsubmit="return confirm('This will replace all existing trades. Continue?');">
+      <input type="file" name="file" accept=".xlsx" required class="!border-0 !p-0">
+      <button class="btn btn-primary">Upload &amp; import</button>
+    </form>
+  </div>
+
+  <div class="card p-6 border-t-4 border-emerald-500">
+    <h3 class="font-semibold mb-2">Option 3 — Zerodha tradebook (CSV or XLSX)</h3>
+    <p class="text-sm text-zinc-600 mb-4">
+      Export from Zerodha Console → Reports → Tradebook. CSV or XLSX both work.
+      Imports are <strong>append-only and deduplicated</strong> on Zerodha's Trade ID,
+      so re-uploading an overlapping tradebook is safe. New executions for a symbol
+      with an already-open trade extend that trade (pyramid / exit) instead of creating a duplicate.
+    </p>
+    <form method="post" action="/import/zerodha" enctype="multipart/form-data">
+      <div class="flex items-end gap-3 mb-3">
+        <input type="file" name="file" accept=".csv,.xlsx" required class="!border-0 !p-0">
+        <button class="btn btn-primary">Import from Zerodha</button>
+      </div>
+      <p class="text-xs text-zinc-500">
+        Stop-loss and setup aren't in the broker export — fill those in per trade afterwards (the Edit button on the trade page).
+      </p>
+    </form>
+  </div>
+
+  <div class="text-sm text-zinc-500">
+    Current trade count in app: <strong>{{ trade_count }}</strong>
+  </div>
+</div>
+{% endblock %}

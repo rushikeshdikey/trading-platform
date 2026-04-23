@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% block title %}Settings · Trading Journal{% endblock %}
+{% block content %}
+<div class="max-w-3xl mx-auto space-y-6">
+  <div>
+    <h1 class="text-2xl font-bold">Settings</h1>
+    <p class="text-zinc-500 text-sm mt-1">Capital, defaults, broker connection, and deposit/withdrawal history.</p>
+  </div>
+
+  {% set kite_err = request.query_params.get('kite_error') %}
+  {% set kite_sync_err = request.query_params.get('kite_sync_error') %}
+  {% set kite_connected = request.query_params.get('kite_connected') %}
+  {% set kite_synced = request.query_params.get('kite_synced') %}
+  {% if kite_err %}
+  <div class="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-sm">
+    Zerodha login failed: {{ kite_err }}
+  </div>
+  {% endif %}
+  {% if kite_sync_err %}
+  <div class="p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm">
+    Instrument-master sync failed: {{ kite_sync_err }}
+  </div>
+  {% endif %}
+  {% if kite_connected %}
+  <div class="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm">
+    Connected to Zerodha{% if request.query_params.get('user') %} as <strong>{{ request.query_params.get('user') }}</strong>{% endif %}.
+  </div>
+  {% endif %}
+  {% if kite_synced %}
+  <div class="p-3 rounded-lg bg-zinc-100 border border-zinc-200 text-zinc-900 text-sm">
+    Instrument master synced — <strong>{{ kite_synced }}</strong> rows cached.
+  </div>
+  {% endif %}
+
+  <div class="card p-6">
+    <h3 class="font-semibold mb-2">Zerodha Kite Connect</h3>
+    {% if not kite.configured %}
+      <p class="text-sm text-amber-700">
+        Not configured. Set <code class="text-xs bg-zinc-100 px-1">KITE_API_KEY</code> and
+        <code class="text-xs bg-zinc-100 px-1">KITE_API_SECRET</code> in the project's
+        <code class="text-xs bg-zinc-100 px-1">.env</code> file and restart.
+      </p>
+    {% elif kite.authed %}
+      <div class="flex items-center justify-between flex-wrap gap-3">
+        <div class="text-sm">
+          Connected as <strong>{{ kite.user_name or kite.user_id or '—' }}</strong>
+          <span class="text-zinc-500">· token issued {{ kite.token_date }}</span>
+          <span class="text-zinc-500">· {{ kite_instrument_count }} instruments cached</span>
+        </div>
+        <div class="flex gap-2">
+          <form method="post" action="/auth/zerodha/sync-instruments">
+            <button class="btn btn-ghost">↻ Resync instruments</button>
+          </form>
+          <form method="post" action="/auth/zerodha/logout">
+            <button class="btn btn-ghost text-rose-600">Disconnect</button>
+          </form>
+        </div>
+      </div>
+      <p class="text-xs text-zinc-500 mt-3">
+        Kite access tokens expire every day at ~06:00 IST. Click "Connect Zerodha"
+        each morning to refresh.
+      </p>
+    {% else %}
+      <div class="flex items-center justify-between flex-wrap gap-3">
+        <p class="text-sm text-zinc-600 max-w-xl">
+          Connect to pull live LTP, auto-import today's trades, and power the instrument
+          autocomplete. Your API key is read from <code class="text-xs bg-zinc-100 px-1">.env</code>.
+        </p>
+        <a href="/auth/zerodha/login" class="btn btn-primary">Connect Zerodha</a>
+      </div>
+    {% endif %}
+  </div>
+
+  <div class="card p-6">
+    <h3 class="font-semibold mb-4">Capital &amp; defaults</h3>
+    <form method="post" action="/settings/save" class="grid md:grid-cols-2 gap-4">
+      <div>
+        <label>Starting capital (₹)</label>
+        <input type="number" step="1" name="starting_capital" value="{{ settings.starting_capital }}" required>
+      </div>
+      <div>
+        <label>Starting date</label>
+        <input type="date" name="starting_capital_date" value="{{ settings.starting_capital_date }}" required>
+      </div>
+      <div>
+        <label>Default risk on capital (decimal)</label>
+        <input type="number" step="0.001" name="default_risk_pct" value="{{ settings.default_risk_pct }}" required>
+        <p class="text-xs text-zinc-500 mt-1">e.g. 0.005 means 0.5% risk per trade</p>
+      </div>
+      <div>
+        <label>Default allocation per trade (decimal)</label>
+        <input type="number" step="0.01" name="default_allocation_pct" value="{{ settings.default_allocation_pct }}" required>
+        <p class="text-xs text-zinc-500 mt-1">e.g. 0.10 means 10% allocation per trade</p>
+      </div>
+      <div class="md:col-span-2 flex justify-end">
+        <button class="btn btn-primary">Save</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="card p-6">
+    <h3 class="font-semibold mb-4">Deposits &amp; withdrawals</h3>
+    <form method="post" action="/settings/capital-event" class="grid md:grid-cols-4 gap-3 items-end mb-4">
+      <div><label>Date</label><input type="date" name="event_date" required></div>
+      <div><label>Amount (₹)</label><input type="number" step="1" name="amount" placeholder="+ deposit / - withdrawal" required></div>
+      <div><label>Note (optional)</label><input type="text" name="note"></div>
+      <div><button class="btn btn-primary w-full justify-center">Add</button></div>
+    </form>
+
+    {% if events %}
+    <table class="jrnl">
+      <thead><tr><th>Date</th><th class="text-right">Amount</th><th>Note</th><th></th></tr></thead>
+      <tbody>
+        {% for e in events %}
+        <tr x-data="{ edit: false }">
+          <td>
+            <span x-show="!edit">{{ e.date | shortdate }}</span>
+            <input x-show="edit" form="edit-ev-{{ e.id }}" type="date" name="event_date" value="{{ e.date.isoformat() }}">
+          </td>
+          <td class="text-right tabular-nums {{ e.amount | pnl_color }}">
+            <span x-show="!edit">{{ e.amount | inr_signed }}</span>
+            <input x-show="edit" form="edit-ev-{{ e.id }}" type="number" step="1" name="amount" value="{{ e.amount }}" class="text-right">
+          </td>
+          <td class="text-zinc-600">
+            <span x-show="!edit">{{ e.note or '' }}</span>
+            <input x-show="edit" form="edit-ev-{{ e.id }}" type="text" name="note" value="{{ e.note or '' }}">
+          </td>
+          <td class="text-right whitespace-nowrap">
+            <template x-if="!edit">
+              <div class="flex gap-2 justify-end items-center">
+                <button type="button" @click="edit = true" class="text-zinc-900 text-xs hover:underline">Edit</button>
+                <form method="post" action="/settings/capital-event/{{ e.id }}/delete" onsubmit="return confirm('Delete?');">
+                  <button class="text-rose-600 text-xs hover:underline">Delete</button>
+                </form>
+              </div>
+            </template>
+            <template x-if="edit">
+              <div class="flex gap-2 justify-end items-center">
+                <form id="edit-ev-{{ e.id }}" method="post" action="/settings/capital-event/{{ e.id }}/edit"></form>
+                <button type="submit" form="edit-ev-{{ e.id }}" class="text-emerald-600 text-xs hover:underline font-semibold">Save</button>
+                <button type="button" @click="edit = false" class="text-zinc-500 text-xs hover:underline">Cancel</button>
+              </div>
+            </template>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="text-zinc-500 text-sm">No deposits or withdrawals recorded yet.</p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

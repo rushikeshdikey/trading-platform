@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Lists · Trading Journal{% endblock %}
+{% block content %}
+<div class="max-w-4xl mx-auto">
+  <h1 class="text-2xl font-bold">Dropdown lists</h1>
+  <p class="text-zinc-500 text-sm mt-1 mb-6">Manage the values that show up in Setup, Proficiency, Growth area, Exit trigger, and Base duration pickers.</p>
+
+  <div class="grid md:grid-cols-2 gap-6">
+    {% for cat, items in grouped.items() %}
+    <div class="card p-5">
+      <h3 class="font-semibold mb-3">{{ labels.get(cat, cat) }}</h3>
+      <ul class="space-y-1 mb-4">
+        {% for item in items %}
+        <li class="flex items-center justify-between py-1.5 px-2 rounded hover:bg-zinc-50" x-data="{ edit: false }">
+          <span x-show="!edit">{{ item.value }}</span>
+          <form x-show="edit" method="post" action="/masterlist/{{ item.id }}/rename" class="flex gap-1 flex-1">
+            <input type="text" name="value" value="{{ item.value }}" required class="!py-1 !px-2 text-sm">
+            <button type="submit" class="text-emerald-600 text-xs hover:underline font-semibold whitespace-nowrap">Save</button>
+            <button type="button" @click="edit = false" class="text-zinc-500 text-xs hover:underline whitespace-nowrap">Cancel</button>
+          </form>
+          <div x-show="!edit" class="flex gap-2 items-center">
+            <button type="button" @click="edit = true" class="text-zinc-400 hover:text-zinc-900 text-xs">Rename</button>
+            <form method="post" action="/masterlist/{{ item.id }}/delete" onsubmit="return confirm('Remove &quot;{{ item.value }}&quot;?');">
+              <button class="text-zinc-400 hover:text-rose-600 text-xs">Remove</button>
+            </form>
+          </div>
+        </li>
+        {% else %}
+        <li class="text-zinc-400 text-sm italic py-1">No values yet</li>
+        {% endfor %}
+      </ul>
+      <form method="post" action="/masterlist/add" class="flex gap-2">
+        <input type="hidden" name="category" value="{{ cat }}">
+        <input type="text" name="value" placeholder="Add new..." required>
+        <button class="btn btn-primary whitespace-nowrap">Add</button>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

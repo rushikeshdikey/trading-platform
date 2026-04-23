@@ -1,0 +1,641 @@
+{% extends "base.html" %}
+{% block title %}Dashboard · Trading Journal{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+  <div>
+    <h1 class="text-2xl font-semibold tracking-tight">Dashboard</h1>
+    <p class="text-zinc-500 text-sm mt-1">FY overview and open positions · Indian financial year (Apr–Mar)</p>
+  </div>
+  <form method="get" action="/dashboard" class="flex items-center gap-2">
+    <label class="mb-0 whitespace-nowrap text-xs text-zinc-500">Financial year</label>
+    <select name="year" onchange="this.form.submit()" class="!w-40">
+      {% for y in available_years | reverse %}
+        <option value="{{ y }}" {% if y == year %}selected{% endif %}>FY {{ y }}-{{ '%02d' | format((y+1) % 100) }}</option>
+      {% endfor %}
+    </select>
+  </form>
+</div>
+
+{# -- Sprint 3: loss-streak banner -------------------------------------- #}
+{% if loss_streak.warn %}
+<div class="mb-6 p-4 rounded-lg border-2 border-rose-400 bg-rose-50 text-rose-900 flex items-start gap-3">
+  <div class="text-2xl leading-none">⚠</div>
+  <div class="flex-1">
+    <div class="font-semibold">{{ loss_streak.losing_streak }} losses in a row — consider pausing.</div>
+    <div class="text-sm mt-1">
+      Overall win rate: <span class="font-semibold">{{ "%.0f" | format(loss_streak.historical_win_pct_overall * 100) }}%</span>.
+      {% if loss_streak.historical_win_pct_after_streak is not none %}
+        Your historical win rate <strong>right after</strong> a 3+ loss streak:
+        <span class="font-semibold {% if loss_streak.historical_win_pct_after_streak < loss_streak.historical_win_pct_overall %}text-rose-800{% else %}text-emerald-700{% endif %}">
+          {{ "%.0f" | format(loss_streak.historical_win_pct_after_streak * 100) }}%
+        </span>.
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{# -- Sprint 3: weekly summary card ------------------------------------- #}
+<div class="card mb-6 p-5">
+  <div class="flex items-baseline justify-between mb-3">
+    <h3 class="font-semibold">Last 7 days</h3>
+    <div class="text-xs text-zinc-500">
+      {% if weekly_summary.trades %}{{ weekly_summary.trades }} closed trade{{ 's' if weekly_summary.trades != 1 }}{% else %}No closed trades yet{% endif %}
+    </div>
+  </div>
+  {% if weekly_summary.trades %}
+  <div class="grid grid-cols-2 md:grid-cols-5 gap-3 text-sm">
+    <div>
+      <div class="metric-label">P/L (net)</div>
+      <div class="text-xl font-bold {{ weekly_summary.total_pnl | pnl_color }}">{{ weekly_summary.total_pnl | inr_signed }}</div>
+    </div>
+    <div>
+      <div class="metric-label">Win rate</div>
+      <div class="text-xl font-bold">{{ "%.0f" | format(weekly_summary.win_pct * 100) }}%
+        <span class="text-xs font-normal text-zinc-500">({{ weekly_summary.wins }}W / {{ weekly_summary.losses }}L)</span>
+      </div>
+    </div>
+    <div>
+      <div class="metric-label">Avg R</div>
+      <div class="text-xl font-bold {% if weekly_summary.avg_r is not none %}{{ weekly_summary.avg_r | pnl_color }}{% endif %}">
+        {% if weekly_summary.avg_r is not none %}{{ "%+.2f" | format(weekly_summary.avg_r) }}R{% else %}—{% endif %}
+      </div>
+    </div>
+    <div>
+      <div class="metric-label">Plan followed</div>
+      <div class="text-xl font-bold">{% if weekly_summary.plan_followed_pct is not none %}{{ "%.0f" | format(weekly_summary.plan_followed_pct * 100) }}%{% else %}—{% endif %}</div>
+    </div>
+    <div>
+      <div class="metric-label">Best / Worst</div>
+      <div class="font-bold">
+        <span class="text-emerald-600">{% if weekly_summary.best_r is not none %}{{ "%+.1f" | format(weekly_summary.best_r) }}R{% else %}—{% endif %}</span>
+        <span class="text-zinc-400"> / </span>
+        <span class="text-rose-600">{% if weekly_summary.worst_r is not none %}{{ "%+.1f" | format(weekly_summary.worst_r) }}R{% else %}—{% endif %}</span>
+      </div>
+    </div>
+  </div>
+  {% if weekly_summary.top_mistakes %}
+  <div class="mt-4 pt-3 border-t border-zinc-100 text-sm">
+    <span class="text-zinc-500">Top growth areas flagged this week:</span>
+    {% for tag, count in weekly_summary.top_mistakes %}
+      <span class="pill bg-rose-50 text-rose-700 ml-2">{{ tag }} ×{{ count }}</span>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% else %}
+  <p class="text-sm text-zinc-500">Nothing closed in the last week. Mark exits as trades land to see this fill in.</p>
+  {% endif %}
+</div>
+
+<!-- Live portfolio KPI strip — 5 cards -->
+<div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 mb-4">
+  <div class="card p-5">
+    <div class="flex items-center justify-between">
+      <div class="metric-label">Positions</div>
+      <i data-lucide="layers" class="w-4 h-4 text-zinc-400"></i>
+    </div>
+    <div class="text-3xl font-semibold mt-2 tracking-tight tabular-nums">{{ portfolio.positions }}</div>
+    <div class="text-xs text-zinc-500 mt-1">{{ portfolio.invested_rs | inr }} invested</div>
+  </div>
+  <div class="card p-5">
+    <div class="flex items-center justify-between">
+      <div class="metric-label">Day's P&L</div>
+      <i data-lucide="activity" class="w-4 h-4 text-zinc-400"></i>
+    </div>
+    {% if portfolio.day_pnl_rs is not none %}
+      <div class="text-3xl font-semibold mt-2 tracking-tight tabular-nums {{ portfolio.day_pnl_rs | pnl_color }}">{{ portfolio.day_pnl_rs | inr_signed }}</div>
+      <div class="text-xs {{ portfolio.day_pnl_pct | pnl_color }} mt-1">{% if portfolio.day_pnl_pct is not none %}{{ portfolio.day_pnl_pct | pct_signed(2) }}{% else %}—{% endif %}</div>
+    {% else %}
+      <div class="text-3xl font-semibold mt-2 tracking-tight text-zinc-300">—</div>
+      <div class="text-xs text-zinc-400 mt-1">Refresh prices</div>
+    {% endif %}
+  </div>
+  <div class="card p-5">
+    <div class="flex items-center justify-between">
+      <div class="metric-label">Total P&L</div>
+      <i data-lucide="trending-up" class="w-4 h-4 text-zinc-400"></i>
+    </div>
+    <div class="text-3xl font-semibold mt-2 tracking-tight tabular-nums {{ portfolio.total_pnl_rs | pnl_color }}">{{ portfolio.total_pnl_rs | inr_signed }}</div>
+    <div class="text-xs {{ portfolio.total_pnl_pct | pnl_color }} mt-1">
+      {% if portfolio.total_pnl_pct is not none %}{{ portfolio.total_pnl_pct | pct_signed(2) }} return{% else %}—{% endif %}
+    </div>
+  </div>
+  <div class="card p-5">
+    <div class="flex items-center justify-between">
+      <div class="metric-label">Open risk</div>
+      <i data-lucide="shield-alert" class="w-4 h-4 text-zinc-400"></i>
+    </div>
+    <div class="text-3xl font-semibold mt-2 tracking-tight tabular-nums {% if portfolio.open_risk_pct_of_capital and portfolio.open_risk_pct_of_capital > 0.06 %}text-rose-600{% else %}text-zinc-900{% endif %}">
+      {% if portfolio.open_risk_pct_of_capital is not none %}{{ portfolio.open_risk_pct_of_capital | pct(1) }}{% else %}—{% endif %}
+    </div>
+    <div class="text-xs text-zinc-500 mt-1">{{ portfolio.open_risk_rs | inr }} at risk</div>
+  </div>
+  <div class="card p-5">
+    <div class="flex items-center justify-between">
+      <div class="metric-label">Locked profit</div>
+      <i data-lucide="lock" class="w-4 h-4 text-zinc-400"></i>
+    </div>
+    <div class="text-3xl font-semibold mt-2 tracking-tight tabular-nums text-emerald-600">{% if portfolio.locked_profit_rs %}+{{ portfolio.locked_profit_rs | inr }}{% else %}—{% endif %}</div>
+    <div class="text-xs text-zinc-500 mt-1">if all SL hit</div>
+  </div>
+</div>
+
+<!-- Secondary KPIs: FY level -->
+<div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+  <div class="card p-4">
+    <div class="metric-label">Current capital</div>
+    <div class="text-lg font-semibold mt-1 tracking-tight tabular-nums">{{ yagg.current_capital | inr }}</div>
+  </div>
+  <div class="card p-4">
+    <div class="metric-label">{{ fy_label }} P/L</div>
+    <div class="text-lg font-semibold mt-1 tracking-tight tabular-nums {{ yagg.total_pnl | pnl_color }}">{{ yagg.total_pnl | inr_signed }}</div>
+  </div>
+  <div class="card p-4">
+    <div class="metric-label">Trades</div>
+    <div class="text-lg font-semibold mt-1 tracking-tight tabular-nums">{{ yagg.total_trades }}</div>
+  </div>
+  <div class="card p-4">
+    <div class="metric-label">Win rate</div>
+    <div class="text-lg font-semibold mt-1 tracking-tight tabular-nums">{% if yagg.win_pct is not none %}{{ yagg.win_pct | pct(1) }}{% else %}—{% endif %}</div>
+  </div>
+  <div class="card p-4">
+    <div class="metric-label">Plan followed</div>
+    <div class="text-lg font-semibold mt-1 tracking-tight tabular-nums">{% if yagg.plan_followed_pct is not none %}{{ yagg.plan_followed_pct | pct(0) }}{% else %}—{% endif %}</div>
+  </div>
+</div>
+
+<!-- Open positions snapshot -->
+{% set refreshed = request.query_params.get('refreshed') %}
+{% set checked = request.query_params.get('checked') %}
+{% set failed_syms = request.query_params.get('failed') %}
+{% if refreshed is not none %}
+<div class="p-3 mb-4 rounded-lg bg-zinc-100 border border-zinc-200 text-zinc-900 text-sm">
+  Updated CMP on <strong>{{ refreshed }}</strong> trade{{ 's' if refreshed != '1' else '' }} from {{ checked or 0 }} symbol{{ 's' if checked != '1' else '' }}.
+  {% if failed_syms %}<span class="text-rose-700">Couldn't resolve: {{ failed_syms }}.</span>{% endif %}
+</div>
+{% endif %}
+
+<div class="mb-6"
+     x-data="{
+       preview: { visible: false, x: 0, y: 0, title: '', loading: false },
+       cache: {},
+       chart: null,
+       hoverTimer: null,
+       place(mouseX, mouseY) {
+         const popWidth = 420, popHeight = 260, pad = 12;
+         // Prefer right of cursor; fall back to left if that overflows.
+         let x = mouseX + 20;
+         if (x + popWidth + pad > window.innerWidth) {
+           x = mouseX - popWidth - 20;
+         }
+         // Final clamp so it's always in viewport.
+         x = Math.max(pad, Math.min(x, window.innerWidth - popWidth - pad));
+         let y = mouseY - popHeight / 2;
+         y = Math.max(pad, Math.min(y, window.innerHeight - popHeight - pad));
+         this.preview.x = x;
+         this.preview.y = y;
+       },
+       async showPreview(id, title, event) {
+         clearTimeout(this.hoverTimer);
+         const mouseX = event.clientX, mouseY = event.clientY;
+         this.hoverTimer = setTimeout(async () => {
+           this.preview.title = title;
+           this.place(mouseX, mouseY);
+           this.preview.visible = true;
+           if (!this.cache[id]) {
+             this.preview.loading = true;
+             try { const r = await fetch(`/trades/${id}/chart-data`); if (r.ok) this.cache[id] = await r.json(); }
+             catch (e) {}
+             this.preview.loading = false;
+           }
+           await this.$nextTick();
+           if (this.preview.visible) this.drawChart(this.cache[id]);
+         }, 120);
+       },
+       trackMove(event) {
+         // If preview is visible, follow the cursor so it never clips.
+         if (this.preview.visible) this.place(event.clientX, event.clientY);
+       },
+       hidePreview() {
+         clearTimeout(this.hoverTimer);
+         this.preview.visible = false;
+         if (this.chart) { this.chart.destroy(); this.chart = null; }
+       },
+       drawChart(data) {
+         if (!data || !data.bars || !data.bars.length) return;
+         const ctx = this.$refs.previewChart;
+         if (!ctx) return;
+         if (this.chart) this.chart.destroy();
+         const bars = data.bars.map(b => ({
+           x: luxon.DateTime.fromISO(b.date).toMillis(),
+           o: b.open, h: b.high, l: b.low, c: b.close
+         }));
+         const extent = [bars[0].x, bars[bars.length-1].x];
+         const hline = (val, color, dash) => ({
+           type: 'line', data: extent.map(x => ({x, y: val})),
+           borderColor: color, borderDash: dash, borderWidth: 1, pointRadius: 0, fill: false
+         });
+         const marker = (items, color) => ({
+           type: 'scatter',
+           data: items.map(i => ({ x: luxon.DateTime.fromISO(i.date).toMillis(), y: i.price, label: i.label })),
+           backgroundColor: color, pointRadius: 4, pointStyle: 'triangle', showLine: false
+         });
+         this.chart = new Chart(ctx.getContext('2d'), {
+           type: 'candlestick',
+           data: {
+             datasets: [
+               { label: data.instrument, data: bars,
+                 color: { up: '#059669', down: '#e11d48', unchanged: '#64748b' },
+                 borderColor: { up: '#059669', down: '#e11d48', unchanged: '#64748b' } },
+               hline(data.avg_entry, '#18181b', [6,4]),
+               hline(data.sl, '#f43f5e', [2,3]),
+               ...(data.tsl ? [hline(data.tsl, '#f59e0b', [2,3])] : []),
+               marker(data.entries, '#059669'),
+               marker(data.exits, '#e11d48'),
+             ]
+           },
+           options: {
+             responsive: false, maintainAspectRatio: false,
+             animation: false,
+             plugins: { legend: { display: false }, tooltip: { enabled: false } },
+             scales: {
+               x: { type: 'time', time: { unit: 'day' },
+                    ticks: { font: { size: 9 }, maxTicksLimit: 5 },
+                    grid: { display: false } },
+               y: { position: 'right', ticks: { font: { size: 9 }, callback: v => '₹' + v } }
+             }
+           }
+         });
+       }
+     }">
+  <div class="flex items-center justify-between mb-3">
+    <div class="flex items-center gap-3">
+      <h2 class="text-lg font-semibold">Open positions</h2>
+      {% if prices_last_refresh %}
+        <span class="text-xs text-zinc-500">Prices: {{ prices_last_refresh.strftime('%d %b %H:%M') }} UTC</span>
+      {% endif %}
+      <span class="text-xs text-zinc-400 hidden md:inline">Hover a row for a chart</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <form method="post" action="/prices/refresh">
+        <button class="btn btn-ghost">↻ Refresh</button>
+      </form>
+      <a href="/trades/new" class="btn btn-primary">+ New trade</a>
+    </div>
+  </div>
+
+  <!-- Floating chart preview -->
+  <div x-show="preview.visible" x-cloak
+       :style="`position:fixed; top:${preview.y}px; left:${preview.x}px; width:420px; z-index:60`"
+       class="bg-white rounded-lg shadow-2xl border border-zinc-200 p-3 pointer-events-none">
+    <div class="flex items-center justify-between mb-2">
+      <span class="font-semibold text-sm" x-text="preview.title"></span>
+      <span class="text-xs text-zinc-400" x-show="preview.loading">Loading…</span>
+    </div>
+    <canvas x-ref="previewChart" width="396" height="220"></canvas>
+    <div class="flex items-center gap-3 mt-2 text-[10px] text-zinc-500">
+      <span class="flex items-center gap-1"><span class="inline-block w-3 h-0.5" style="background:#18181b; border-top: 1px dashed;"></span>Entry</span>
+      <span class="flex items-center gap-1"><span class="inline-block w-3 h-0.5" style="background:#f43f5e; border-top: 1px dashed;"></span>SL</span>
+      <span class="flex items-center gap-1"><span class="inline-block w-0 h-0 border-l-[4px] border-r-[4px] border-b-[6px] border-l-transparent border-r-transparent" style="border-bottom-color:#059669"></span>Buy</span>
+      <span class="flex items-center gap-1"><span class="inline-block w-0 h-0 border-l-[4px] border-r-[4px] border-t-[6px] border-l-transparent border-r-transparent" style="border-top-color:#e11d48"></span>Exit</span>
+    </div>
+  </div>
+
+  <div class="card overflow-x-auto">
+    {% if portfolio.cards %}
+    <table class="jrnl">
+      <thead>
+        <tr>
+          <th>Instrument</th>
+          <th>Setup</th>
+          <th>Status</th>
+          <th class="text-right">Avg entry</th>
+          <th class="text-right">CMP</th>
+          <th class="text-right">Move</th>
+          <th class="text-right">R</th>
+          <th class="text-right">P/L</th>
+          <th class="text-right">SL / TSL</th>
+          <th class="text-right">Qty</th>
+          <th class="text-right">Alloc</th>
+          <th class="text-right">Risk</th>
+          <th class="text-right">Locked</th>
+          <th class="text-right">Days</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in portfolio.cards %}
+        <tr @mouseenter="showPreview({{ c.trade_id }}, '{{ c.instrument }}', $event)"
+            @mousemove="trackMove($event)"
+            @mouseleave="hidePreview()">
+          <td class="font-semibold">
+            <a href="/trades/{{ c.trade_id }}" class="hover:text-zinc-900">{{ c.instrument }}</a>
+            <span class="pill {% if c.side == 'B' %}bg-emerald-50 text-emerald-700{% else %}bg-rose-50 text-rose-700{% endif %} ml-2">{% if c.side == 'B' %}L{% else %}S{% endif %}</span>
+          </td>
+          <td class="text-zinc-600">{{ c.setup or '—' }}</td>
+          <td>
+            {% if c.status_tag == 'Safe' %}<span class="pill bg-emerald-50 text-emerald-700">✓ Safe</span>
+            {% elif c.status_tag == 'Marginal' %}<span class="pill bg-amber-50 text-amber-700">Marginal</span>
+            {% elif c.status_tag == 'Tight' %}<span class="pill bg-amber-50 text-amber-700">Tight</span>
+            {% elif c.status_tag == 'At risk' %}<span class="pill bg-rose-50 text-rose-700">At risk</span>
+            {% elif c.status_tag == 'Watch' %}<span class="pill bg-zinc-100 text-zinc-600">Watch</span>
+            {% else %}<span class="text-zinc-400 text-xs">—</span>
+            {% endif %}
+          </td>
+          <td class="text-right tabular-nums">{{ c.avg_entry | num }}</td>
+          <td class="text-right tabular-nums">{% if c.cmp %}{{ c.cmp | num }}{% else %}<span class="text-zinc-400">—</span>{% endif %}</td>
+          <td class="text-right tabular-nums {{ c.move_pct | pnl_color if c.move_pct is not none else '' }}">
+            {% if c.move_pct is not none %}{{ c.move_pct | pct_signed(1) }}{% else %}—{% endif %}
+          </td>
+          <td class="text-right tabular-nums {{ c.r_multiple | pnl_color if c.r_multiple is not none else '' }}">
+            {% if c.r_multiple is not none %}{{ "%+.1f" | format(c.r_multiple) }}R{% else %}—{% endif %}
+          </td>
+          <td class="text-right tabular-nums {{ c.pnl_rs | pnl_color if c.pnl_rs is not none else '' }}">
+            {% if c.pnl_rs is not none %}{{ c.pnl_rs | inr_signed }}{% else %}—{% endif %}
+          </td>
+          <td class="text-right tabular-nums">{{ c.sl | num }}{% if c.tsl %}<span class="text-amber-600"> / {{ c.tsl | num }}</span>{% endif %}</td>
+          <td class="text-right tabular-nums">{{ c.open_qty }}<span class="text-zinc-400">/{{ c.total_qty }}</span></td>
+          <td class="text-right tabular-nums">{{ c.allocation_pct | pct(1) }}</td>
+          <td class="text-right tabular-nums {% if c.risk_rs > 0 %}text-rose-600{% else %}text-zinc-400{% endif %}">
+            {% if c.risk_rs > 0 %}{{ c.risk_rs | inr }}{% else %}—{% endif %}
+          </td>
+          <td class="text-right tabular-nums {% if c.locked_profit_rs > 0 %}text-emerald-600{% else %}text-zinc-400{% endif %}">
+            {% if c.locked_profit_rs > 0 %}+{{ c.locked_profit_rs | inr }}{% else %}—{% endif %}
+          </td>
+          <td class="text-right tabular-nums">{{ c.holding_days }}</td>
+          <td class="text-right"><a class="text-zinc-900 text-sm hover:underline" href="/trades/{{ c.trade_id }}">Manage</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="p-8 text-center text-zinc-500">
+      No open positions. <a href="/trades/new" class="text-zinc-900 font-medium hover:underline">Add your first trade</a>.
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Equity curve + monthly PnL -->
+<div class="grid lg:grid-cols-2 gap-6 mb-6">
+  <div class="card p-4">
+    <h3 class="font-semibold mb-3">Equity curve — {{ fy_label }}</h3>
+    <canvas id="equityChart" height="180"></canvas>
+  </div>
+  <div class="card p-4">
+    <h3 class="font-semibold mb-3">Monthly P/L</h3>
+    <canvas id="pnlChart" height="180"></canvas>
+  </div>
+</div>
+
+<!-- Monthly table (per-year, descending) -->
+{% for yt in yearly_tables %}
+<div class="card mb-6 overflow-x-auto">
+  <div class="px-4 py-3 border-b border-zinc-200 flex items-baseline justify-between">
+    <div class="font-semibold">Monthly breakdown · <span class="text-zinc-900">{{ yt.label }}</span></div>
+    <div class="text-xs text-zinc-500 tabular-nums">
+      {{ yt.yagg.total_trades }} trades · year P/L
+      <span class="{{ yt.yagg.total_pnl | pnl_color }}">{{ yt.yagg.total_pnl | inr_signed }}</span>
+      · final <span class="font-semibold">{{ yt.yagg.current_capital | inr }}</span>
+    </div>
+  </div>
+  <table class="jrnl">
+    <thead>
+      <tr>
+        <th>Month</th>
+        <th class="text-right">Start capital</th>
+        <th class="text-right">Added / Withdrawn</th>
+        <th class="text-right">P/L</th>
+        <th class="text-right">P/L %</th>
+        <th class="text-right">Final</th>
+        <th class="text-right">Trades</th>
+        <th class="text-right">Win %</th>
+        <th class="text-right">Avg R:R</th>
+        <th class="text-right">Best</th>
+        <th class="text-right">Worst</th>
+        <th class="text-right">Avg days</th>
+        <th class="text-right">F&amp;O</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in yt.rows %}
+      <tr>
+        <td class="font-medium">{{ row.month }}</td>
+        <td class="text-right tabular-nums">{{ row.starting_capital | inr }}</td>
+        <td class="text-right tabular-nums">{% if row.added_withdrawn %}{{ row.added_withdrawn | inr_signed }}{% else %}—{% endif %}</td>
+        <td class="text-right tabular-nums {{ row.pnl_rs | pnl_color }}">{% if row.pnl_rs %}{{ row.pnl_rs | inr_signed }}{% else %}—{% endif %}</td>
+        <td class="text-right tabular-nums {{ row.pnl_pct | pnl_color }}">{% if row.pnl_pct %}{{ row.pnl_pct | pct_signed(2) }}{% else %}—{% endif %}</td>
+        <td class="text-right tabular-nums">{{ row.final_capital | inr }}</td>
+        <td class="text-right tabular-nums">{{ row.num_trades or '—' }}</td>
+        <td class="text-right tabular-nums">{% if row.win_pct is not none %}{{ row.win_pct | pct(0) }}{% else %}—{% endif %}</td>
+        <td class="text-right tabular-nums">{% if row.avg_rr is not none %}{{ "%.2f" | format(row.avg_rr) }}R{% else %}—{% endif %}</td>
+        <td class="text-right tabular-nums text-emerald-600">{% if row.best_impact %}{{ row.best_impact | pct_signed(2) }}{% else %}—{% endif %}</td>
+        <td class="text-right tabular-nums text-rose-600">{% if row.worst_impact %}{{ row.worst_impact | pct_signed(2) }}{% else %}—{% endif %}</td>
+        <td class="text-right tabular-nums">{% if row.avg_holding_days is not none %}{{ "%.0f" | format(row.avg_holding_days) }}{% else %}—{% endif %}</td>
+        <td class="text-right tabular-nums">{{ row.fo_count or '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endfor %}
+
+<!-- ============= Edge analytics (Sprint 1) ============= -->
+<div class="mb-2 mt-10 flex items-baseline gap-3">
+  <h2 class="text-xl font-bold">Edge analytics</h2>
+  <span class="text-sm text-zinc-500">All-time · closed trades only · "R" = multiples of initial risk</span>
+</div>
+
+{% macro r_cell(v, digits=2) %}
+  {% if v is none %}<span class="text-zinc-400">—</span>
+  {% else %}<span class="{{ v | pnl_color }}">{{ "%+.*f" | format(digits, v) }}R</span>{% endif %}
+{% endmacro %}
+
+{% if edge_setups %}
+<div class="card mb-6">
+  <div class="px-4 py-3 border-b border-zinc-200">
+    <div class="font-semibold">Which setups actually make money?</div>
+    <div class="text-xs text-zinc-500 mt-1">Expectancy = win% × avg_win_R + loss% × avg_loss_R. Positive means the setup adds edge.</div>
+  </div>
+  <table class="jrnl">
+    <thead>
+      <tr>
+        <th>Setup</th>
+        <th class="text-right">N</th>
+        <th class="text-right">Win %</th>
+        <th class="text-right">Avg win</th>
+        <th class="text-right">Avg loss</th>
+        <th class="text-right">Expectancy</th>
+        <th class="text-right">Best</th>
+        <th class="text-right">Worst</th>
+        <th class="text-right">Total P/L</th>
+        <th>Verdict</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s in edge_setups %}
+      <tr title="{{ s.verdict_reason }}">
+        <td class="font-medium">{{ s.setup }}</td>
+        <td class="text-right tabular-nums">{{ s.trades }}</td>
+        <td class="text-right tabular-nums">{{ s.win_pct | pct(0) }}</td>
+        <td class="text-right tabular-nums">{{ r_cell(s.avg_win_r) }}</td>
+        <td class="text-right tabular-nums">{{ r_cell(s.avg_loss_r) }}</td>
+        <td class="text-right tabular-nums font-semibold">{{ r_cell(s.expectancy_r) }}</td>
+        <td class="text-right tabular-nums">{{ r_cell(s.best_r, 1) }}</td>
+        <td class="text-right tabular-nums">{{ r_cell(s.worst_r, 1) }}</td>
+        <td class="text-right tabular-nums {{ s.total_pnl | pnl_color }}">{{ s.total_pnl | inr_signed }}</td>
+        <td class="text-sm whitespace-nowrap">{{ s.verdict }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<!-- Plan discipline ROI -->
+{% if plan_breakdown %}
+<div class="card mb-6">
+  <div class="px-4 py-3 border-b border-zinc-200">
+    <div class="font-semibold">Does following the plan pay?</div>
+    <div class="text-xs text-zinc-500 mt-1">Closed trades split by whether you marked Plan followed = Yes / No / unmarked.</div>
+  </div>
+  <div class="grid md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-zinc-200">
+    {% for b in plan_breakdown %}
+    <div class="p-5">
+      <div class="text-sm font-semibold {{ 'text-emerald-700' if 'followed' == b.label[-8:] else 'text-rose-700' if 'NOT' in b.label else 'text-zinc-500' }}">{{ b.label }}</div>
+      <div class="mt-2 flex items-baseline gap-2">
+        <span class="text-3xl font-bold tabular-nums">{{ r_cell(b.avg_r) }}</span>
+        <span class="text-xs text-zinc-500">avg R</span>
+      </div>
+      <div class="mt-3 text-xs text-zinc-600 space-y-0.5 tabular-nums">
+        <div><span class="text-zinc-400">Trades</span> · {{ b.trades }}</div>
+        <div><span class="text-zinc-400">Win rate</span> · {% if b.win_pct is not none %}{{ b.win_pct | pct(0) }}{% else %}—{% endif %}</div>
+        <div><span class="text-zinc-400">Total P/L</span> · <span class="{{ b.total_pnl | pnl_color }}">{{ b.total_pnl | inr_signed }}</span></div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- Hold-time + weekday -->
+<div class="grid lg:grid-cols-2 gap-6 mb-6">
+  {% if hold_buckets | selectattr('trades') | list %}
+  <div class="card">
+    <div class="px-4 py-3 border-b border-zinc-200">
+      <div class="font-semibold">Are winners held long enough?</div>
+      <div class="text-xs text-zinc-500 mt-1">Distribution by holding days.</div>
+    </div>
+    <table class="jrnl text-sm">
+      <thead>
+        <tr>
+          <th>Bucket</th>
+          <th class="text-right">Trades</th>
+          <th class="text-right">Win %</th>
+          <th class="text-right">Avg R</th>
+          <th class="text-right">Total P/L</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for h in hold_buckets %}
+        <tr {% if not h.trades %}class="text-zinc-400"{% endif %}>
+          <td class="font-medium">{{ h.label }}</td>
+          <td class="text-right tabular-nums">{{ h.trades or '—' }}</td>
+          <td class="text-right tabular-nums">{% if h.trades %}{{ h.win_pct | pct(0) }}{% else %}—{% endif %}</td>
+          <td class="text-right tabular-nums">{{ r_cell(h.avg_r) }}</td>
+          <td class="text-right tabular-nums {{ h.total_pnl | pnl_color if h.trades }}">{% if h.trades %}{{ h.total_pnl | inr_signed }}{% else %}—{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  {% if weekday_stats | selectattr('trades') | list %}
+  <div class="card">
+    <div class="px-4 py-3 border-b border-zinc-200">
+      <div class="font-semibold">Entry day of week</div>
+      <div class="text-xs text-zinc-500 mt-1">Are some weekdays costing you?</div>
+    </div>
+    <table class="jrnl text-sm">
+      <thead>
+        <tr>
+          <th>Day</th>
+          <th class="text-right">Trades</th>
+          <th class="text-right">Win %</th>
+          <th class="text-right">Avg R</th>
+          <th class="text-right">Total P/L</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for w in weekday_stats %}
+        <tr {% if not w.trades %}class="text-zinc-400"{% endif %}>
+          <td class="font-medium">{{ w.label }}</td>
+          <td class="text-right tabular-nums">{{ w.trades or '—' }}</td>
+          <td class="text-right tabular-nums">{% if w.trades %}{{ w.win_pct | pct(0) }}{% else %}—{% endif %}</td>
+          <td class="text-right tabular-nums">{{ r_cell(w.avg_r) }}</td>
+          <td class="text-right tabular-nums {{ w.total_pnl | pnl_color if w.trades }}">{% if w.trades %}{{ w.total_pnl | inr_signed }}{% else %}—{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</div>
+
+<script>
+(function() {
+  const equity = {{ equity_curve | tojson }};
+  const months = equity.map(r => r.month);
+
+  new Chart(document.getElementById('equityChart'), {
+    type: 'line',
+    data: {
+      labels: months,
+      datasets: [{
+        label: 'Capital',
+        data: equity.map(r => r.capital),
+        borderColor: '#18181b',
+        backgroundColor: 'rgba(79, 70, 229, 0.1)',
+        tension: 0.3,
+        fill: true,
+      }],
+    },
+    options: {
+      plugins: { legend: { display: false } },
+      scales: {
+        y: {
+          ticks: {
+            callback: (v) => (v >= 1e5 ? '₹' + (v/1e5).toFixed(1) + 'L' : '₹' + v),
+          },
+        },
+      },
+    },
+  });
+
+  const pnl = {{ months | map(attribute='pnl_rs') | list | tojson }};
+  new Chart(document.getElementById('pnlChart'), {
+    type: 'bar',
+    data: {
+      labels: months,
+      datasets: [{
+        label: 'P/L',
+        data: pnl,
+        backgroundColor: pnl.map(v => v >= 0 ? '#10b981' : '#f43f5e'),
+      }],
+    },
+    options: {
+      plugins: { legend: { display: false } },
+      scales: {
+        y: {
+          ticks: {
+            callback: (v) => (Math.abs(v) >= 1000 ? (v/1000).toFixed(0) + 'k' : v),
+          },
+        },
+      },
+    },
+  });
+})();
+</script>
+
+{% endblock %}

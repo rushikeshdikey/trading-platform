@@ -1,0 +1,486 @@
+{% extends "base.html" %}
+{% block title %}New trade · Trading Journal{% endblock %}
+{% block content %}
+<div class="max-w-3xl mx-auto">
+  <div class="mb-6">
+    <h1 class="text-2xl font-bold">Log a new trade</h1>
+    <p class="text-zinc-500 text-sm mt-1">Tell us how you entered — exits and review fields come when you close the trade.</p>
+  </div>
+
+  <form method="post" action="/trades/new" x-data='{
+      side: "B",
+      entry: 0,
+      sl: 0,
+      qty: 0,
+      capital: {{ capital }},
+      riskPct: {{ default_risk }},
+      allocPct: {{ default_alloc }},
+      setup: "",
+      setupStats: null,
+      setupLoading: false,
+      riskBudget: null,
+      async loadSetupStats(s) {
+        if (!s) { this.setupStats = null; return; }
+        this.setupLoading = true;
+        try {
+          const r = await fetch("/insights/setup-stats?setup=" + encodeURIComponent(s));
+          this.setupStats = r.ok ? await r.json() : null;
+        } catch (e) { this.setupStats = null; }
+        this.setupLoading = false;
+      },
+      async loadRiskBudget() {
+        try {
+          const r = await fetch("/insights/risk-budget");
+          this.riskBudget = r.ok ? await r.json() : null;
+        } catch (e) { this.riskBudget = null; }
+      },
+      get newHeat() {
+        const per = Math.abs(this.entry - this.sl);
+        return (per > 0 && this.qty > 0) ? per * this.qty : 0;
+      },
+      get projectedHeat() { return (this.riskBudget?.open_heat_rs || 0) + this.newHeat; },
+      get projectedHeatPct() {
+        const cap = this.riskBudget?.capital || this.capital;
+        return cap > 0 ? this.projectedHeat / cap : 0;
+      },
+      get heatOverBudget() {
+        if (!this.riskBudget) return false;
+        return this.projectedHeat > this.riskBudget.max_heat_rs + 0.01;
+      },
+      get slSideInvalid() {
+        if (!this.entry || !this.sl) return false;
+        if (this.side === "B" && this.sl >= this.entry) return true;
+        if (this.side === "S" && this.sl <= this.entry) return true;
+        return false;
+      },
+      get slEqualsEntry() {
+        return this.entry && this.sl && Math.abs(this.entry - this.sl) < 0.01;
+      },
+      get risk() {
+        const r = Math.abs(this.entry - this.sl);
+        return this.qty > 0 && r > 0 ? r * this.qty : 0;
+      },
+      get position() { return (this.entry || 0) * (this.qty || 0); },
+      get allocation() { return this.capital > 0 ? this.position / this.capital : 0; },
+      get slPct() { return this.entry > 0 ? Math.abs(this.entry - this.sl) / this.entry : 0; },
+      get suggestedByRisk() {
+        const r = Math.abs(this.entry - this.sl);
+        if (!r) return 0;
+        return Math.floor((this.capital * this.riskPct) / r);
+      },
+      get suggestedByAlloc() {
+        if (!this.entry) return 0;
+        return Math.floor((this.capital * this.allocPct) / this.entry);
+      },
+      pickQty(n) { this.qty = n; },
+      inr(n) {
+        if (!n) return "₹0";
+        const neg = n < 0 ? "-" : "";
+        n = Math.abs(n);
+        let s = Math.round(n).toString();
+        if (s.length > 3) {
+          let last3 = s.slice(-3), rest = s.slice(0, -3), groups = [];
+          while (rest.length > 2) { groups.unshift(rest.slice(-2)); rest = rest.slice(0, -2); }
+          if (rest) groups.unshift(rest);
+          s = groups.join(",") + "," + last3;
+        }
+        return neg + "₹" + s;
+      },
+      pct(n, d=2) { return (n*100).toFixed(d) + "%"; },
+      charges: null,
+      chargesTimer: null,
+      async loadCharges() {
+        const e = this.entry, q = this.qty, s = this.side;
+        if (!e || !q) { this.charges = null; return; }
+        clearTimeout(this.chargesTimer);
+        this.chargesTimer = setTimeout(async () => {
+          try {
+            const r = await fetch(`/insights/charges-preview?entry=${e}&qty=${q}&side=${s}`);
+            this.charges = r.ok ? await r.json() : null;
+          } catch (err) { this.charges = null; }
+        }, 200);
+      },
+      // Pre-trade checklist
+      instrument: "",
+      checklist: null,
+      checklistLoading: false,
+      checklistTimer: null,
+      manualChecks: {
+        consolidation: false,
+        sector: false,
+        early_stage: false,
+      },
+      async loadChecklist() {
+        const sym = (this.instrument || "").trim();
+        if (!sym) { this.checklist = null; return; }
+        clearTimeout(this.checklistTimer);
+        this.checklistTimer = setTimeout(async () => {
+          this.checklistLoading = true;
+          try {
+            const r = await fetch(`/insights/pre-trade-check?symbol=${encodeURIComponent(sym)}&entry=${this.entry}&sl=${this.sl}&side=${this.side}`);
+            this.checklist = r.ok ? await r.json() : null;
+          } catch (e) { this.checklist = null; }
+          this.checklistLoading = false;
+        }, 300);
+      },
+      get manualScore() {
+        return Object.values(this.manualChecks).filter(Boolean).length;
+      },
+      get manualMax() { return Object.keys(this.manualChecks).length; },
+      get totalScore() { return (this.checklist?.score || 0) + this.manualScore; },
+      get totalMax() { return (this.checklist?.max_score || 0) + this.manualMax; },
+      get checklistVerdict() {
+        const s = this.totalScore, m = this.totalMax;
+        if (!m) return { label: "Fill instrument & prices", class: "bg-zinc-100 text-zinc-500 border-zinc-200" };
+        const pct = s / m;
+        if (pct >= 0.80) return { label: "🟢 Strong setup", class: "bg-emerald-50 text-emerald-700 border-emerald-200" };
+        if (pct >= 0.60) return { label: "🟡 Acceptable", class: "bg-amber-50 text-amber-800 border-amber-200" };
+        return { label: "🔴 Weak — skip?", class: "bg-rose-50 text-rose-700 border-rose-200" };
+      },
+      get checklistWeak() { return this.totalMax > 0 && (this.totalScore / this.totalMax) < 0.60; }
+    }' x-init="loadRiskBudget()"
+       x-effect="loadCharges()"
+       x-effect="loadChecklist()"
+       class="space-y-6">
+
+    <!-- Step 1 -->
+    <div class="card p-6">
+      <div class="flex items-center gap-2 mb-4">
+        <span class="inline-flex w-7 h-7 items-center justify-center rounded-full bg-zinc-900 text-white text-sm font-bold">1</span>
+        <h2 class="font-semibold text-lg">Entry details</h2>
+      </div>
+      <div class="grid md:grid-cols-2 gap-4">
+        <div class="relative" x-data="{
+              q: '',
+              open: false,
+              matches: [],
+              highlight: -1,
+              timer: null,
+              async search(v) {
+                clearTimeout(this.timer);
+                const q = (v || '').trim();
+                if (!q) { this.matches = []; return; }
+                this.timer = setTimeout(async () => {
+                  try {
+                    const r = await fetch('/instruments/search?q=' + encodeURIComponent(q));
+                    this.matches = r.ok ? await r.json() : [];
+                    this.highlight = this.matches.length ? 0 : -1;
+                  } catch (e) { this.matches = []; }
+                }, 180);
+              },
+              pick(m) { this.q = m.symbol; this.open = false; this.matches = []; $root.instrument = m.symbol; }
+             }"
+             @click.away="open = false"
+             x-effect="$root.instrument = q">
+          <label>Instrument</label>
+          <input type="text" name="instrument" placeholder="e.g. RELIANCE, TATAPOWER" required
+                 autocomplete="off"
+                 class="uppercase" style="text-transform: uppercase;"
+                 x-model="q"
+                 @input="search(q); open = true"
+                 @focus="if (matches.length) open = true"
+                 @keydown.arrow-down.prevent="highlight = Math.min(highlight + 1, matches.length - 1)"
+                 @keydown.arrow-up.prevent="highlight = Math.max(highlight - 1, 0)"
+                 @keydown.enter.prevent="if (highlight >= 0 && matches[highlight]) pick(matches[highlight])"
+                 @keydown.escape="open = false">
+          <div x-show="open && matches.length" x-transition.opacity
+               class="absolute z-30 mt-1 w-full bg-white border border-zinc-200 rounded-lg shadow-lg max-h-72 overflow-auto">
+            <template x-for="(m, i) in matches" :key="m.symbol + '|' + m.exchange">
+              <button type="button"
+                      class="w-full text-left px-3 py-2 border-b border-zinc-100 last:border-0"
+                      :class="i === highlight ? 'bg-zinc-100' : 'hover:bg-zinc-50'"
+                      @mouseenter="highlight = i"
+                      @mousedown.prevent="pick(m)">
+                <div class="flex items-center justify-between gap-2">
+                  <span class="font-semibold" x-text="m.symbol"></span>
+                  <span class="text-xs text-zinc-400" x-text="m.exchange"></span>
+                </div>
+                <div class="text-xs text-zinc-500 truncate" x-text="m.name || ''"></div>
+              </button>
+            </template>
+          </div>
+        </div>
+        <div>
+          <label>Entry date</label>
+          <input type="date" name="entry_date" value="{{ today }}" required>
+        </div>
+        <div>
+          <label>Direction</label>
+          <div class="flex gap-2">
+            <label class="flex-1 cursor-pointer">
+              <input type="radio" name="side" value="B" x-model="side" class="peer sr-only" checked>
+              <div class="text-center py-2 border border-zinc-300 rounded-lg peer-checked:bg-emerald-50 peer-checked:border-emerald-500 peer-checked:text-emerald-700 font-medium">Long (Buy)</div>
+            </label>
+            <label class="flex-1 cursor-pointer">
+              <input type="radio" name="side" value="S" x-model="side" class="peer sr-only">
+              <div class="text-center py-2 border border-zinc-300 rounded-lg peer-checked:bg-rose-50 peer-checked:border-rose-500 peer-checked:text-rose-700 font-medium">Short (Sell)</div>
+            </label>
+          </div>
+        </div>
+        <div>
+          <label>Setup</label>
+          <select name="setup" x-model="setup" @change="loadSetupStats(setup)">
+            <option value="">— Choose setup —</option>
+            {% for s in dropdowns.setup %}<option>{{ s }}</option>{% endfor %}
+          </select>
+        </div>
+        <div>
+          <label>Entry price</label>
+          <input type="number" step="0.01" name="entry_price" x-model.number="entry" required>
+        </div>
+        <div>
+          <label>Stop loss (SL)</label>
+          <input type="number" step="0.01" name="sl" x-model.number="sl" required>
+          <div class="mt-1 text-xs text-zinc-500" x-show="entry > 0 && sl > 0">
+            SL distance: <span x-text="pct(slPct)"></span>
+          </div>
+        </div>
+        <div>
+          <label>Base duration</label>
+          <select name="base_duration">
+            <option value="">— Optional —</option>
+            {% for d in dropdowns.base_duration %}<option>{{ d }}</option>{% endfor %}
+          </select>
+        </div>
+        <div>
+          <label>CMP (optional)</label>
+          <input type="number" step="0.01" name="cmp_price" placeholder="Current market price">
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 2: Position sizing -->
+    <div class="card p-6">
+      <div class="flex items-center gap-2 mb-4">
+        <span class="inline-flex w-7 h-7 items-center justify-center rounded-full bg-zinc-900 text-white text-sm font-bold">2</span>
+        <h2 class="font-semibold text-lg">Position size</h2>
+        <span class="text-xs text-zinc-500 ml-auto">Capital: <span x-text="inr(capital)"></span></span>
+      </div>
+
+      <div class="grid md:grid-cols-2 gap-4 mb-4">
+        <button type="button"
+                class="text-left p-4 rounded-lg border border-zinc-200 hover:border-zinc-900 hover:bg-zinc-100 transition"
+                @click="pickQty(suggestedByRisk)">
+          <div class="text-xs uppercase tracking-wide text-zinc-500 font-semibold">Risk-based</div>
+          <div class="text-2xl font-bold mt-1" x-text="suggestedByRisk"></div>
+          <div class="text-xs text-zinc-500 mt-1">
+            Risk <span x-text="pct(riskPct, 3)"></span> of capital (<span x-text="inr(capital * riskPct)"></span>)
+          </div>
+        </button>
+        <button type="button"
+                class="text-left p-4 rounded-lg border border-zinc-200 hover:border-zinc-900 hover:bg-zinc-100 transition"
+                @click="pickQty(suggestedByAlloc)">
+          <div class="text-xs uppercase tracking-wide text-zinc-500 font-semibold">Allocation-based</div>
+          <div class="text-2xl font-bold mt-1" x-text="suggestedByAlloc"></div>
+          <div class="text-xs text-zinc-500 mt-1">
+            Allocate <span x-text="pct(allocPct, 1)"></span> of capital (<span x-text="inr(capital * allocPct)"></span>)
+          </div>
+        </button>
+      </div>
+
+      <div>
+        <label>Final quantity</label>
+        <input type="number" name="initial_qty" x-model.number="qty" min="1" required>
+      </div>
+
+      <div class="mt-4 grid grid-cols-2 md:grid-cols-4 gap-4" x-show="qty > 0">
+        <div><div class="metric-label">Position size</div><div class="font-semibold" x-text="inr(position)"></div></div>
+        <div><div class="metric-label">Allocation</div><div class="font-semibold" x-text="pct(allocation)"></div></div>
+        <div><div class="metric-label">Risk ₹</div><div class="font-semibold" x-text="inr(risk)"></div></div>
+        <div><div class="metric-label">Risk % of capital</div><div class="font-semibold" x-text="pct(capital > 0 ? risk/capital : 0, 3)"></div></div>
+      </div>
+    </div>
+
+    <!-- Step 2.5: Sprint-2 guardrails -->
+
+    <!-- SL sanity warning -->
+    <template x-if="slEqualsEntry || slSideInvalid">
+      <div class="p-4 rounded-lg border-2 border-rose-300 bg-rose-50 text-rose-800">
+        <div class="font-semibold mb-1">⚠ Invalid stop-loss</div>
+        <div class="text-sm" x-show="slEqualsEntry">SL is equal to entry — this means "no stop", and the trade will be rejected on save.</div>
+        <div class="text-sm" x-show="slSideInvalid">For a <span x-text="side === 'B' ? 'long' : 'short'"></span> trade, SL must be <span x-text="side === 'B' ? 'below' : 'above'"></span> entry.</div>
+      </div>
+    </template>
+
+    <!-- Historical edge on this setup -->
+    <template x-if="setup && setupStats">
+      <div class="card p-5 border-l-4"
+           :class="setupStats.found && setupStats.expectancy_r !== null && setupStats.expectancy_r >= 0.3 ? 'border-emerald-500' : setupStats.expectancy_r !== null && setupStats.expectancy_r < 0 ? 'border-rose-500' : 'border-amber-500'">
+        <div class="flex items-center gap-2 mb-3">
+          <span class="inline-flex w-7 h-7 items-center justify-center rounded-full bg-zinc-900 text-white text-sm font-bold">?</span>
+          <h2 class="font-semibold text-lg">Your history on <span x-text="setup"></span></h2>
+          <span class="ml-auto text-sm" x-text="setupStats.verdict"></span>
+        </div>
+        <template x-if="setupStats.found">
+          <div class="grid grid-cols-2 md:grid-cols-5 gap-3 text-sm">
+            <div><div class="metric-label">Trades</div><div class="font-semibold" x-text="setupStats.trades + ' (' + setupStats.wins + 'W / ' + setupStats.losses + 'L)'"></div></div>
+            <div><div class="metric-label">Win %</div><div class="font-semibold" x-text="setupStats.win_pct.toFixed(0) + '%'"></div></div>
+            <div><div class="metric-label">Avg win</div><div class="font-semibold text-emerald-600" x-text="setupStats.avg_win_r !== null ? '+' + setupStats.avg_win_r + 'R' : '—'"></div></div>
+            <div><div class="metric-label">Avg loss</div><div class="font-semibold text-rose-600" x-text="setupStats.avg_loss_r !== null ? setupStats.avg_loss_r + 'R' : '—'"></div></div>
+            <div>
+              <div class="metric-label">Expectancy</div>
+              <div class="font-semibold"
+                   :class="setupStats.expectancy_r !== null && setupStats.expectancy_r >= 0 ? 'text-emerald-600' : 'text-rose-600'"
+                   x-text="setupStats.expectancy_r !== null ? (setupStats.expectancy_r >= 0 ? '+' : '') + setupStats.expectancy_r + 'R' : '—'"></div>
+            </div>
+            <div class="col-span-2 md:col-span-5 text-xs text-zinc-500 pt-2 border-t border-zinc-200" x-text="setupStats.verdict_reason"></div>
+          </div>
+        </template>
+        <template x-if="!setupStats.found">
+          <div class="text-sm text-zinc-600" x-text="setupStats.message"></div>
+        </template>
+      </div>
+    </template>
+
+    <!-- Risk budget meter -->
+    <template x-if="riskBudget">
+      <div class="card p-5" :class="heatOverBudget ? 'border-2 border-rose-400' : ''">
+        <div class="flex items-center gap-2 mb-3">
+          <span class="inline-flex w-7 h-7 items-center justify-center rounded-full bg-zinc-900 text-white text-sm font-bold">R</span>
+          <h2 class="font-semibold text-lg">Risk budget</h2>
+          <span class="ml-auto text-xs text-zinc-500" x-text="riskBudget.open_positions + ' open position' + (riskBudget.open_positions === 1 ? '' : 's')"></span>
+        </div>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm mb-3">
+          <div><div class="metric-label">Capital</div><div class="font-semibold" x-text="inr(riskBudget.capital)"></div></div>
+          <div><div class="metric-label">Current open heat</div><div class="font-semibold" x-text="inr(riskBudget.open_heat_rs) + ' (' + (riskBudget.open_heat_pct_of_capital*100).toFixed(2) + '%)'"></div></div>
+          <div><div class="metric-label">This trade adds</div><div class="font-semibold" :class="newHeat > 0 ? 'text-amber-700' : ''" x-text="inr(newHeat)"></div></div>
+          <div>
+            <div class="metric-label">After save</div>
+            <div class="font-semibold tabular-nums" :class="heatOverBudget ? 'text-rose-700' : 'text-zinc-900'">
+              <span x-text="inr(projectedHeat)"></span>
+              <span class="text-xs" x-text="'(' + (projectedHeatPct*100).toFixed(2) + '%)'"></span>
+            </div>
+          </div>
+        </div>
+        <!-- heat bar -->
+        <div class="h-2 bg-zinc-100 rounded-full overflow-hidden">
+          <div class="h-full transition-all"
+               :class="heatOverBudget ? 'bg-rose-500' : 'bg-emerald-500'"
+               :style="'width: ' + Math.min(100, (projectedHeat / (riskBudget.max_heat_rs || 1)) * 100).toFixed(1) + '%'"></div>
+        </div>
+        <div class="text-xs text-zinc-500 mt-2 flex justify-between">
+          <span>Budget: <span x-text="inr(riskBudget.max_heat_rs) + ' (' + (riskBudget.max_heat_pct*100).toFixed(1) + '% of capital)'"></span></span>
+          <span x-show="heatOverBudget" class="text-rose-700 font-semibold">Over budget by <span x-text="inr(projectedHeat - riskBudget.max_heat_rs)"></span></span>
+        </div>
+      </div>
+    </template>
+
+    <!-- Live charges preview (Zerodha formula) -->
+    <template x-if="charges && charges.total > 0">
+      <div class="card p-5">
+        <div class="flex items-center gap-2 mb-3">
+          <span class="inline-flex w-7 h-7 items-center justify-center rounded-full bg-zinc-400 text-white text-sm font-bold">₹</span>
+          <h2 class="font-semibold text-lg">Estimated charges (Zerodha equity delivery)</h2>
+          <span class="ml-auto text-zinc-900 font-bold text-lg" x-text="inr(charges.total)"></span>
+        </div>
+        <div class="grid grid-cols-3 md:grid-cols-6 gap-2 text-xs tabular-nums text-zinc-700">
+          <div><div class="text-zinc-400">Brokerage</div><div x-text="inr(charges.brokerage)"></div></div>
+          <div><div class="text-zinc-400">STT</div><div x-text="inr(charges.stt)"></div></div>
+          <div><div class="text-zinc-400">Exchange</div><div x-text="inr(charges.exchange)"></div></div>
+          <div><div class="text-zinc-400">SEBI</div><div x-text="inr(charges.sebi)"></div></div>
+          <div><div class="text-zinc-400">Stamp</div><div x-text="inr(charges.stamp)"></div></div>
+          <div><div class="text-zinc-400">GST</div><div x-text="inr(charges.gst)"></div></div>
+        </div>
+        <p class="text-xs text-zinc-500 mt-3">
+          Entry-side only (sell-side STT + DP fee apply automatically when you book exits).
+        </p>
+      </div>
+    </template>
+
+    <!-- Step 3: Optional notes -->
+    <div class="card p-6">
+      <div class="flex items-center gap-2 mb-4">
+        <span class="inline-flex w-7 h-7 items-center justify-center rounded-full bg-zinc-300 text-white text-sm font-bold">3</span>
+        <h2 class="font-semibold text-lg">Notes <span class="text-sm font-normal text-zinc-500">(optional)</span></h2>
+      </div>
+      <label>Pre-trade observations</label>
+      <textarea name="observations" rows="3" placeholder="Why this trade? Any relevant context..."></textarea>
+    </div>
+
+    <!-- Pre-trade checklist (funnel of filters) -->
+    <div class="card" x-show="instrument && instrument.length > 0">
+      <div class="card-header">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <i data-lucide="list-checks" class="w-4 h-4 text-zinc-500"></i>
+            <div class="card-title">Pre-trade checklist</div>
+          </div>
+          <span class="pill text-xs border font-semibold" :class="checklistVerdict.class" x-text="checklistVerdict.label"></span>
+        </div>
+        <div class="card-description">Auto-checks run on price history. Tick the manual checks once you've eyeballed the chart.</div>
+      </div>
+      <div class="card-body space-y-1.5">
+        <div x-show="checklistLoading" class="text-sm text-zinc-500">Analysing price history…</div>
+
+        <!-- Auto checks -->
+        <template x-for="c in (checklist?.checks || [])" :key="c.key">
+          <div class="flex items-start justify-between py-2 border-b border-zinc-100 last:border-0">
+            <div class="flex items-start gap-2">
+              <template x-if="c.status === 'pass'"><i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-600 mt-0.5"></i></template>
+              <template x-if="c.status === 'fail'"><i data-lucide="x-circle" class="w-4 h-4 text-rose-600 mt-0.5"></i></template>
+              <template x-if="c.status === 'skip'"><i data-lucide="minus-circle" class="w-4 h-4 text-zinc-400 mt-0.5"></i></template>
+              <div>
+                <div class="text-sm font-medium" x-text="c.label"></div>
+                <div class="text-xs text-zinc-500" x-text="c.detail"></div>
+              </div>
+            </div>
+          </div>
+        </template>
+
+        <!-- Manual checks -->
+        <div class="pt-2 mt-2 border-t border-zinc-200">
+          <div class="text-xs uppercase tracking-wide text-zinc-500 font-semibold mb-2">Your judgment</div>
+
+          <label class="flex items-start gap-2 py-2 cursor-pointer hover:bg-zinc-50 rounded px-2 -mx-2">
+            <input type="checkbox" x-model="manualChecks.consolidation" class="!w-4 !h-4 mt-0.5">
+            <div>
+              <div class="text-sm font-medium">Consolidation quality looks clean</div>
+              <div class="text-xs text-zinc-500">Tight range, no wild overshoots, 10+ bars of rest.</div>
+            </div>
+          </label>
+
+          <label class="flex items-start gap-2 py-2 cursor-pointer hover:bg-zinc-50 rounded px-2 -mx-2">
+            <input type="checkbox" x-model="manualChecks.sector" class="!w-4 !h-4 mt-0.5">
+            <div>
+              <div class="text-sm font-medium">Sector is in favour</div>
+              <div class="text-xs text-zinc-500">Parent sector/index is above its own 50 EMA and near highs.</div>
+            </div>
+          </label>
+
+          <label class="flex items-start gap-2 py-2 cursor-pointer hover:bg-zinc-50 rounded px-2 -mx-2">
+            <input type="checkbox" x-model="manualChecks.early_stage" class="!w-4 !h-4 mt-0.5">
+            <div>
+              <div class="text-sm font-medium">Early stage of move</div>
+              <div class="text-xs text-zinc-500">Not extended; this is the 1st or 2nd leg out of base.</div>
+            </div>
+          </label>
+        </div>
+      </div>
+      <div class="card-footer justify-between">
+        <div class="text-sm">
+          Score <span class="font-bold tabular-nums" x-text="totalScore"></span> / <span class="tabular-nums" x-text="totalMax"></span>
+        </div>
+        <div class="h-1.5 flex-1 mx-4 bg-zinc-100 rounded-full overflow-hidden">
+          <div class="h-full transition-all"
+               :class="totalScore/totalMax >= 0.8 ? 'bg-emerald-500' : totalScore/totalMax >= 0.6 ? 'bg-amber-400' : 'bg-rose-500'"
+               :style="`width: ${totalMax ? (totalScore/totalMax*100) : 0}%`"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="flex justify-end gap-3">
+      <a href="/trades" class="btn btn-ghost">Cancel</a>
+      <button type="submit"
+              :disabled="slEqualsEntry || slSideInvalid"
+              :class="{
+                'btn': true,
+                'btn-primary': !slEqualsEntry && !slSideInvalid && !checklistWeak,
+                'btn-outline': checklistWeak && !slEqualsEntry && !slSideInvalid,
+                'opacity-50 cursor-not-allowed': slEqualsEntry || slSideInvalid,
+              }"
+              @click="if (checklistWeak && !confirm('Checklist score is weak — save anyway?')) $event.preventDefault()"
+              x-text="(slEqualsEntry || slSideInvalid) ? 'Fix SL to save' : (checklistWeak ? 'Save anyway' : 'Save trade')">Save trade</button>
+    </div>
+  </form>
+</div>
+{% endblock %}
