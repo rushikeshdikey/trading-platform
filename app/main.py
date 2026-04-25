@@ -50,11 +50,18 @@ async def _redirect_to_login(_request: Request, exc: _RedirectToLogin):
 
 @app.middleware("http")
 async def _attach_user_to_request(request: Request, call_next):
-    """Make the current user available to templates as ``request.state.user``.
+    """Make the current user available to templates AND to SQLAlchemy events.
 
     Runs INSIDE SessionMiddleware (so .session is decoded). Looks up the
-    user once per request and caches on request.state. Does NOT enforce
-    auth — that's ``require_user``'s job.
+    user, caches on request.state.user, and sets the request-scoped
+    contextvar that `orm_events.py` reads to auto-filter per-user queries.
+
+    Why set the contextvar HERE and not in `require_user`: FastAPI runs
+    sync deps in an anyio worker thread, and ContextVar.set() inside a
+    worker doesn't propagate back to the route handler's context. The
+    middleware runs in the request's async task, so a contextvar set
+    here is visible everywhere downstream — both in deps and in route
+    handlers' threadpools (anyio copies the parent context into workers).
     """
     request.state.user = None
     try:
@@ -62,11 +69,18 @@ async def _attach_user_to_request(request: Request, call_next):
     except AssertionError:
         uid = None
     if uid is not None:
+        from .auth import current_user_id_var
         from .models import User
         with SessionLocal() as db:
-            u = db.get(User, uid)
+            u = (
+                db.query(User)
+                .execution_options(skip_user_filter=True)
+                .filter(User.id == uid)
+                .first()
+            )
             if u is not None and u.is_active:
                 request.state.user = u
+                current_user_id_var.set(u.id)
     return await call_next(request)
 
 

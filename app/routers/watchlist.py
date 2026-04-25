@@ -69,6 +69,45 @@ def add(
     return RedirectResponse(url=return_to or "/watchlist", status_code=303)
 
 
+@router.post("/bulk-add")
+def bulk_add(
+    request: Request,
+    db: Session = Depends(get_db),
+    symbols: str = Form(...),
+    setup_label: str | None = Form(None),
+    return_to: str | None = Form(None),
+):
+    """Add many symbols at once. ``symbols`` is comma-separated, may contain
+    whitespace and `NSE:`/`BSE:` prefixes which we strip. Skips duplicates."""
+    raw = [s.strip() for s in symbols.split(",") if s.strip()]
+    cleaned = []
+    for s in raw:
+        # Strip exchange prefix if present (NSE:RELIANCE → RELIANCE).
+        if ":" in s:
+            s = s.split(":", 1)[1]
+        s = s.upper()
+        if s and s not in cleaned:
+            cleaned.append(s)
+
+    existing = {
+        s for (s,) in db.query(Watchlist.symbol).filter(Watchlist.symbol.in_(cleaned)).all()
+    }
+    added = 0
+    for sym in cleaned:
+        if sym in existing:
+            continue
+        db.add(Watchlist(symbol=sym, setup_label=setup_label or None))
+        added += 1
+    db.commit()
+
+    target = return_to or "/watchlist"
+    sep = "&" if "?" in target else "?"
+    return RedirectResponse(
+        url=f"{target}{sep}added={added}&skipped={len(cleaned) - added}",
+        status_code=303,
+    )
+
+
 @router.post("/{wid}/delete")
 def delete(wid: int, db: Session = Depends(get_db)):
     row = db.get(Watchlist, wid)

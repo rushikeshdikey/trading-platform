@@ -126,8 +126,17 @@
 
   <!-- Results -->
   {% if results is not none %}
-    <div class="card">
-      <div class="card-header flex items-center justify-between">
+    {% set added = request.query_params.get('added') %}
+    {% set skipped = request.query_params.get('skipped') %}
+    {% if added is not none %}
+    <div class="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm">
+      Added <strong>{{ added }}</strong> to watchlist{% if skipped and skipped != '0' %}, skipped {{ skipped }} duplicate{{ 's' if skipped != '1' else '' }}{% endif %}.
+    </div>
+    {% endif %}
+
+    <div class="card"
+         x-data='scannerSelect({{ results|map(attribute="candidate")|map(attribute="symbol")|list|tojson }}, {{ selected_scan.label|tojson }})'>
+      <div class="card-header flex items-center justify-between flex-wrap gap-3">
         <div>
           <div class="card-title">{{ selected_scan.label }} — {{ run_meta.candidates_count }} candidates</div>
           <div class="card-description">
@@ -135,7 +144,96 @@
             Capital ₹{{ '{:,.0f}'.format(capital) }} · Risk tiers 0.25% / 0.5%
           </div>
         </div>
+
+        {% if results %}
+        <!-- Bulk action bar -->
+        <div class="flex items-center gap-2">
+          <!-- Exchange prefix toggle -->
+          <div class="inline-flex rounded-md border border-zinc-200 overflow-hidden text-xs">
+            <button type="button" @click="exchange = 'NSE'"
+                    :class="exchange === 'NSE' ? 'bg-zinc-900 text-white' : 'bg-white hover:bg-zinc-50'"
+                    class="px-2.5 py-1 font-semibold">NSE</button>
+            <button type="button" @click="exchange = 'BSE'"
+                    :class="exchange === 'BSE' ? 'bg-zinc-900 text-white' : 'bg-white hover:bg-zinc-50'"
+                    class="px-2.5 py-1 font-semibold">BSE</button>
+          </div>
+
+          <!-- Selected count -->
+          <span class="text-xs px-2.5 py-1 rounded-md font-semibold tabular-nums"
+                :class="selected.size > 0 ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : 'bg-zinc-100 text-zinc-500 border border-zinc-200'">
+            <span x-text="selected.size"></span> selected
+          </span>
+
+          <!-- TradingView dropdown -->
+          <div class="relative" x-data="{ open: false }" @click.away="open = false">
+            <button type="button"
+                    :disabled="selected.size === 0"
+                    @click="open = !open"
+                    class="btn btn-primary !py-1.5 !px-3 text-xs"
+                    :class="selected.size === 0 ? 'opacity-50 cursor-not-allowed' : ''">
+              <i data-lucide="external-link"></i>Export to TradingView
+              <i data-lucide="chevron-down" class="!w-3 !h-3 opacity-70"></i>
+            </button>
+            <div x-show="open" x-transition.opacity.duration.100ms x-cloak
+                 class="absolute right-0 mt-1 w-60 bg-white border border-zinc-200 rounded-lg shadow-md py-1 text-sm z-40">
+              <button type="button" @click="copyAll(); open = false"
+                      class="w-full text-left flex items-center gap-2 px-3 py-2 hover:bg-zinc-100">
+                <i data-lucide="copy" class="w-4 h-4"></i>Copy all
+                <span class="ml-auto text-[11px] text-zinc-400 tabular-nums" x-text="selected.size"></span>
+              </button>
+              <div class="border-t border-zinc-100 my-1"></div>
+              <button type="button" @click="copyBatch(30); open = false"
+                      :disabled="selected.size <= 30"
+                      :class="selected.size <= 30 ? 'opacity-40 cursor-not-allowed' : 'hover:bg-zinc-100'"
+                      class="w-full text-left flex items-center gap-2 px-3 py-2">
+                <i data-lucide="layers" class="w-4 h-4"></i>Copy in batches of 30
+                <span class="ml-auto text-[11px] text-zinc-400 tabular-nums"
+                      x-text="batchInfo(30)"></span>
+              </button>
+              <button type="button" @click="copyBatch(100); open = false"
+                      :disabled="selected.size <= 100"
+                      :class="selected.size <= 100 ? 'opacity-40 cursor-not-allowed' : 'hover:bg-zinc-100'"
+                      class="w-full text-left flex items-center gap-2 px-3 py-2">
+                <i data-lucide="layers" class="w-4 h-4"></i>Copy in batches of 100
+                <span class="ml-auto text-[11px] text-zinc-400 tabular-nums"
+                      x-text="batchInfo(100)"></span>
+              </button>
+              <div x-show="batchSize > 0" class="border-t border-zinc-100 my-1"></div>
+              <button type="button" x-show="batchSize > 0" @click="copyNextBatch(); open = false"
+                      class="w-full text-left flex items-center gap-2 px-3 py-2 hover:bg-zinc-100 text-emerald-700 font-medium">
+                <i data-lucide="arrow-right" class="w-4 h-4"></i>
+                Copy batch <span x-text="batchIdx + 1"></span> of
+                <span x-text="Math.ceil(selected.size / batchSize)"></span>
+              </button>
+              <button type="button" x-show="batchSize > 0" @click="resetBatch(); open = false"
+                      class="w-full text-left flex items-center gap-2 px-3 py-2 hover:bg-zinc-100 text-xs text-zinc-500">
+                <i data-lucide="rotate-ccw" class="w-3 h-3"></i>Reset batch position
+              </button>
+            </div>
+          </div>
+
+          <!-- Bulk add to watchlist -->
+          <form method="post" action="/watchlist/bulk-add" @submit="prepareBulkAdd($event)">
+            <input type="hidden" name="symbols" :value="Array.from(selected).join(',')">
+            <input type="hidden" name="setup_label" :value="setupLabel">
+            <input type="hidden" name="return_to" value="/scanners?scan_type={{ selected_scan.key }}">
+            <button type="submit" :disabled="selected.size === 0"
+                    class="btn btn-outline !py-1.5 !px-3 text-xs"
+                    :class="selected.size === 0 ? 'opacity-50 cursor-not-allowed' : ''">
+              <i data-lucide="bookmark-plus"></i>Add to watchlist
+            </button>
+          </form>
+
+          <!-- Toast -->
+          <div x-show="toast" x-transition.opacity
+               x-cloak
+               class="fixed bottom-6 right-6 bg-zinc-900 text-white px-4 py-3 rounded-lg shadow-lg text-sm z-50">
+            <span x-text="toast"></span>
+          </div>
+        </div>
+        {% endif %}
       </div>
+
       {% if not results %}
         <div class="p-6 text-sm text-zinc-500">No candidates match the hardcoded thresholds today. Markets change — try again tomorrow.</div>
       {% else %}
@@ -143,6 +241,11 @@
         <table class="jrnl">
           <thead>
             <tr>
+              <th class="!w-8">
+                <input type="checkbox" @change="toggleAll($event.target.checked)"
+                       :checked="allSelected()"
+                       class="rounded border-zinc-300">
+              </th>
               <th>Symbol</th><th>Close</th><th>Score</th>
               {% if selected_scan.key == 'horizontal_resistance' %}
                 <th>Resistance</th><th>Touches</th><th>Distance</th><th>Last touch</th>
@@ -160,7 +263,13 @@
             {% for row in results %}
               {% set c = row.candidate %}
               {% set s = row.sizing %}
-              <tr>
+              <tr :class="selected.has('{{ c.symbol }}') ? 'bg-emerald-50/40' : ''">
+                <td>
+                  <input type="checkbox"
+                         :checked="selected.has('{{ c.symbol }}')"
+                         @change="toggle('{{ c.symbol }}')"
+                         class="rounded border-zinc-300">
+                </td>
                 <td class="font-semibold">{{ c.symbol }}</td>
                 <td class="tabular-nums">₹{{ '{:,.2f}'.format(c.close) }}</td>
                 <td class="tabular-nums">{{ c.score }}</td>
@@ -192,6 +301,12 @@
                 <td class="tabular-nums text-xs"><span class="text-zinc-500">₹{{ '{:,.0f}'.format(s.risk_rs_low) }}</span> / <span class="font-semibold">₹{{ '{:,.0f}'.format(s.risk_rs_high) }}</span></td>
                 <td class="text-right whitespace-nowrap">
                   <a class="btn btn-outline !py-1 !px-2 text-xs"
+                     href="https://www.tradingview.com/chart/?symbol={{ 'NSE' }}:{{ c.symbol }}"
+                     target="_blank" rel="noopener"
+                     title="Open chart on TradingView">
+                    <i data-lucide="line-chart"></i>
+                  </a>
+                  <a class="btn btn-outline !py-1 !px-2 text-xs"
                      href="/trades/new?instrument={{ c.symbol }}&entry_price={{ c.suggested_entry }}&sl={{ c.suggested_sl }}&qty={{ s.qty_high }}&setup={{ selected_scan.label|urlencode }}"
                      title="Pre-filled at 0.5% risk — edit qty on the form for 0.25%">
                     <i data-lucide="file-plus"></i>Plan
@@ -205,7 +320,7 @@
                       <input type="hidden" name="alert_price" value="{{ c.suggested_entry }}">
                       <input type="hidden" name="suggested_sl" value="{{ c.suggested_sl }}">
                       <input type="hidden" name="notes" value="Score {{ c.score }} · close ₹{{ c.close }}">
-                      <input type="hidden" name="return_to" value="/scanners">
+                      <input type="hidden" name="return_to" value="/scanners?scan_type={{ selected_scan.key }}">
                       <button class="btn btn-ghost !py-1 !px-2 text-xs" title="Save to watchlist">
                         <i data-lucide="bookmark"></i>
                       </button>
@@ -219,6 +334,88 @@
       </div>
       {% endif %}
     </div>
+
+    <script>
+      // Alpine component for the bulk-select bar. Keeps the selected
+      // symbol set, the exchange prefix, and a stateful batch-cursor
+      // for "copy in batches of N" so consecutive clicks advance through
+      // chunks the way ChartsMaze does.
+      function scannerSelect(allSymbols, setupLabel) {
+        return {
+          allSymbols: allSymbols,
+          setupLabel: setupLabel,
+          selected: new Set(),
+          exchange: 'NSE',
+          batchSize: 0,
+          batchIdx: 0,
+          toast: '',
+          toggle(sym) {
+            if (this.selected.has(sym)) this.selected.delete(sym);
+            else this.selected.add(sym);
+            this.selected = new Set(this.selected);  // trigger reactivity
+            this.resetBatch();
+          },
+          toggleAll(check) {
+            if (check) this.allSymbols.forEach(s => this.selected.add(s));
+            else this.allSymbols.forEach(s => this.selected.delete(s));
+            this.selected = new Set(this.selected);
+            this.resetBatch();
+          },
+          allSelected() {
+            return this.allSymbols.length > 0 &&
+                   this.allSymbols.every(s => this.selected.has(s));
+          },
+          formatted() {
+            return Array.from(this.selected).map(s => this.exchange + ':' + s);
+          },
+          showToast(msg) {
+            this.toast = msg;
+            setTimeout(() => { this.toast = ''; }, 2200);
+          },
+          async copyAll() {
+            const text = this.formatted().join(',');
+            await navigator.clipboard.writeText(text);
+            this.showToast('Copied ' + this.selected.size + ' symbols');
+          },
+          batchInfo(size) {
+            if (this.selected.size <= size) return '';
+            return Math.ceil(this.selected.size / size) + ' batches';
+          },
+          async copyBatch(size) {
+            this.batchSize = size;
+            this.batchIdx = 0;
+            await this.copyNextBatch();
+          },
+          async copyNextBatch() {
+            const all = this.formatted();
+            const start = this.batchIdx * this.batchSize;
+            const end = start + this.batchSize;
+            const slice = all.slice(start, end);
+            if (slice.length === 0) {
+              this.showToast('All batches copied — paste them in TradingView');
+              this.resetBatch();
+              return;
+            }
+            await navigator.clipboard.writeText(slice.join(','));
+            this.batchIdx += 1;
+            const totalBatches = Math.ceil(all.length / this.batchSize);
+            this.showToast('Copied batch ' + this.batchIdx + ' / ' + totalBatches +
+                           ' (' + slice.length + ' symbols)');
+          },
+          resetBatch() {
+            this.batchSize = 0;
+            this.batchIdx = 0;
+          },
+          prepareBulkAdd(e) {
+            if (this.selected.size === 0) {
+              e.preventDefault();
+              return;
+            }
+            // form's hidden input is bound via :value; nothing else to do
+          },
+        };
+      }
+    </script>
   {% endif %}
 </div>
 {% endblock %}
