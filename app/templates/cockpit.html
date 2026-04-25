@@ -25,6 +25,56 @@
     <p class="text-sm mt-1 opacity-90">{{ m.detail }}</p>
   </div>
 
+  {# ============================================================
+     Market Mood — composite 0-100 score with per-component bar.
+     Algoxr-inspired panel; uses inputs we already track (no new
+     data sources). Click any component to navigate to /breadth.
+     ============================================================ #}
+  {% if m.mood and m.mood.score is not none %}
+  {% set mood = m.mood %}
+  <a href="/breadth" class="block card p-5 hover:shadow-md transition group">
+    <div class="flex flex-wrap items-center gap-x-6 gap-y-3">
+      <div class="flex items-center gap-4">
+        {# Big score number with a circular ring backdrop. #}
+        <div class="relative w-20 h-20 shrink-0">
+          <svg viewBox="0 0 36 36" class="w-20 h-20 -rotate-90">
+            <circle cx="18" cy="18" r="15" fill="none" stroke="#e4e4e7" stroke-width="3"></circle>
+            <circle cx="18" cy="18" r="15" fill="none"
+                    stroke="currentColor" stroke-width="3" stroke-linecap="round"
+                    stroke-dasharray="{{ '%.2f'|format(mood.score * 94.25 / 100) }} 94.25"
+                    class="{% if mood.score >= 60 %}text-emerald-600{% elif mood.score >= 30 %}text-amber-600{% else %}text-rose-600{% endif %}"></circle>
+          </svg>
+          <div class="absolute inset-0 flex items-center justify-center flex-col">
+            <span class="text-xl font-black tabular-nums leading-none">{{ '%.0f'|format(mood.score) }}</span>
+            <span class="text-[9px] uppercase tracking-wider text-zinc-500">/ 100</span>
+          </div>
+        </div>
+        <div>
+          <div class="text-[11px] font-bold uppercase tracking-widest text-zinc-500 mb-0.5">Market Mood</div>
+          <div class="text-lg font-semibold">{{ mood.label }}</div>
+          <div class="text-xs text-zinc-500">As of {{ mood.as_of }} · click for full breadth dashboard</div>
+        </div>
+      </div>
+
+      <div class="flex-1 min-w-[260px]">
+        <div class="space-y-1.5">
+          {% for c in mood.components %}
+          <div class="flex items-center gap-3 text-xs">
+            <span class="w-32 text-zinc-600 shrink-0">{{ c.label }}</span>
+            <div class="flex-1 h-1.5 bg-zinc-100 rounded-full overflow-hidden">
+              <div class="h-full rounded-full {% if c.value >= 60 %}bg-emerald-500{% elif c.value >= 30 %}bg-amber-500{% else %}bg-rose-500{% endif %}"
+                   style="width: {{ c.value }}%"></div>
+            </div>
+            <span class="w-10 text-right tabular-nums font-semibold text-zinc-700">{{ '%.0f'|format(c.value) }}</span>
+            <span class="w-10 text-right text-[10px] text-zinc-400">×{{ c.weight }}%</span>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </a>
+  {% endif %}
+
   {% if state.cooldown.warn %}
   <!-- Cooldown alert (consecutive losses) -->
   <div class="rounded-lg border-l-4 border-rose-500 bg-rose-50 p-4 text-rose-900">

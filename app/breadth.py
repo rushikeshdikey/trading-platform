@@ -314,6 +314,78 @@ def compute_and_store(db: Session, days: int = 130) -> dict:
     }
 
 
+def mood_score(row) -> dict:
+    """Composite 0-100 market mood, computed from a MarketBreadth row.
+
+    Inspired by algoxr's Market Mood panel. Uses inputs we already track —
+    no external API calls required. Weights chosen so long-term trend
+    dominates short-term noise (the score should answer "is this a market
+    where adding risk pays off this week?").
+
+      - pct_above_200ema   (trend health, long)         × 0.35
+      - pct_above_50ema    (trend health, medium)       × 0.30
+      - pct_above_20ema    (momentum, short)            × 0.15
+      - adv / (adv + dec)  (today's participation, %)   × 0.10
+      - 52W new-high share (NH / (NH + NL), %)          × 0.10
+
+    Returns score, tier label, color class, and a per-component breakdown
+    so the UI can show a gauge AND explain why.
+    """
+    if row is None:
+        return {"score": None, "label": "—", "klass": "bg-zinc-100 text-zinc-500 border-zinc-200", "components": []}
+
+    advances = (row.advances or 0)
+    declines = (row.declines or 0)
+    nh = (row.new_highs_52w or 0)
+    nl = (row.new_lows_52w or 0)
+
+    # 0-100 floats for each component.
+    c_200 = float(row.pct_above_200ema or 0.0)
+    c_50 = float(row.pct_above_50ema or 0.0)
+    c_20 = float(row.pct_above_20ema or 0.0)
+    adv_share = (advances / (advances + declines) * 100.0) if (advances + declines) > 0 else 50.0
+    nh_share = (nh / (nh + nl) * 100.0) if (nh + nl) > 0 else 50.0
+
+    score = (
+        c_200 * 0.35
+        + c_50 * 0.30
+        + c_20 * 0.15
+        + adv_share * 0.10
+        + nh_share * 0.10
+    )
+    score = max(0.0, min(100.0, score))
+
+    # Tiers — same buckets you'd actually trade off of.
+    if score >= 75:
+        label, klass = "Euphoric — protect gains", "bg-amber-100 text-amber-900 border-amber-200"
+    elif score >= 60:
+        label, klass = "Risk-on — full size OK", "bg-emerald-100 text-emerald-800 border-emerald-300"
+    elif score >= 45:
+        label, klass = "Constructive — selective adds", "bg-emerald-50 text-emerald-700 border-emerald-200"
+    elif score >= 30:
+        label, klass = "Cautious — half size", "bg-zinc-100 text-zinc-700 border-zinc-200"
+    elif score >= 15:
+        label, klass = "Risk-off — defensive", "bg-rose-50 text-rose-700 border-rose-200"
+    else:
+        label, klass = "Bearish — sit on hands", "bg-rose-100 text-rose-800 border-rose-200"
+
+    components = [
+        {"key": "above_200", "label": "% above 200 EMA", "value": round(c_200, 1), "weight": 35},
+        {"key": "above_50",  "label": "% above 50 EMA",  "value": round(c_50, 1),  "weight": 30},
+        {"key": "above_20",  "label": "% above 20 EMA",  "value": round(c_20, 1),  "weight": 15},
+        {"key": "adv_share", "label": "Adv / (Adv+Dec)", "value": round(adv_share, 1), "weight": 10},
+        {"key": "nh_share",  "label": "52W NH / (NH+NL)", "value": round(nh_share, 1), "weight": 10},
+    ]
+
+    return {
+        "score": round(score, 1),
+        "label": label,
+        "klass": klass,
+        "components": components,
+        "as_of": row.date,
+    }
+
+
 def sentiment_label(pct_above_200: float, pct_above_50: float) -> tuple[str, str]:
     """Human-friendly sentiment tag + a Tailwind color class."""
     composite = (pct_above_200 + pct_above_50) / 2

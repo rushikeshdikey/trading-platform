@@ -50,6 +50,9 @@ class MarketVerdict:
     label: str            # breadth_mod.sentiment_label result
     detail: str
     allow_new_longs: bool
+    # Composite Market Mood score (0-100) + per-component breakdown.
+    # Computed via breadth_mod.mood_score from the same row above.
+    mood: dict | None = None
 
 
 def build_market_verdict(db: Session) -> MarketVerdict:
@@ -100,6 +103,7 @@ def build_market_verdict(db: Session) -> MarketVerdict:
         label=label,
         detail=detail,
         allow_new_longs=allow,
+        mood=breadth_mod.mood_score(row),
     )
 
 
