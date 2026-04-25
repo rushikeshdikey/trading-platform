@@ -44,6 +44,16 @@ services:
       - appdata:/app/data
     expose:
       - "8000"
+    # Lets `docker compose up --wait` know when the new container is actually
+    # ready to serve, so deploys finish only after migrations run + workers
+    # accept traffic. Without this, --wait returns the moment the process is
+    # "running" and the first user request 502s mid-migration.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsSL http://localhost:8000/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 6
+      start_period: 30s
 
   caddy:
     image: caddy:2-alpine

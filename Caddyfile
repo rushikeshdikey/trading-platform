@@ -13,6 +13,14 @@
     reverse_proxy app:8000 {
         header_up X-Forwarded-Proto {scheme}
         header_up X-Forwarded-Host {host}
+
+        # During deploys the app container is briefly unavailable (~5-10s
+        # while the new image starts + healthchecks pass). Without these,
+        # Caddy returns 502 the instant a dial fails. With them, Caddy
+        # retries every 500ms for up to 30s, giving us near-zero-downtime
+        # rolling deploys instead of a hard outage every push.
+        lb_try_duration 30s
+        lb_try_interval 500ms
     }
 
     log {
