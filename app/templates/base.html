@@ -192,11 +192,19 @@
         <span class="hidden sm:inline text-base font-semibold tracking-tight">Trading Journal</span>
       </a>
 
-      {# Mobile hamburger — visible only on <md. The full nav slides in from the right when tapped. #}
+      {# Mobile hamburger — visible only on <md. The full nav slides in from the right when tapped.
+         Inline SVG instead of <i data-lucide="menu">: lucide expands at JS-load time,
+         which on slow phones is a long beat after first paint. With inline SVG the
+         button is visible immediately. #}
       <button type="button" @click="menuOpen = true"
-              class="md:hidden ml-auto p-2 -mr-2 rounded-md hover:bg-zinc-100"
+              class="md:hidden ml-auto inline-flex items-center justify-center p-2 -mr-2 rounded-md hover:bg-zinc-100 active:bg-zinc-200"
               aria-label="Open menu">
-        <i data-lucide="menu" class="w-6 h-6"></i>
+        <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="4" y1="6"  x2="20" y2="6"></line>
+          <line x1="4" y1="12" x2="20" y2="12"></line>
+          <line x1="4" y1="18" x2="20" y2="18"></line>
+        </svg>
       </button>
 
       {# Mobile drawer — full-screen overlay. #}
@@ -213,8 +221,12 @@
              x-transition:leave-end="translate-x-full">
           <div class="flex items-center justify-between px-4 py-3 border-b border-zinc-200">
             <span class="font-semibold">Menu</span>
-            <button type="button" @click="menuOpen = false" class="p-2 -mr-2 rounded-md hover:bg-zinc-100" aria-label="Close menu">
-              <i data-lucide="x" class="w-5 h-5"></i>
+            <button type="button" @click="menuOpen = false" class="inline-flex items-center justify-center p-2 -mr-2 rounded-md hover:bg-zinc-100" aria-label="Close menu">
+              <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none"
+                   stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+                <line x1="6" y1="18" x2="18" y2="6"></line>
+              </svg>
             </button>
           </div>
           {% set u = request.state.user %}
@@ -259,6 +271,9 @@
             </a>
             <a href="/breadth" class="{{ _link_class }} {% if path.startswith('/breadth') %}{{ _active_class }}{% endif %}">
               <i data-lucide="bar-chart-3" class="w-5 h-5"></i>Breadth
+            </a>
+            <a href="/sector-rotation" class="{{ _link_class }} {% if path.startswith('/sector-rotation') %}{{ _active_class }}{% endif %}">
+              <i data-lucide="git-compare-arrows" class="w-5 h-5"></i>Sector rotation
             </a>
             <div class="border-t border-zinc-100 my-2"></div>
             <a href="/import" class="{{ _link_class }} {% if path.startswith('/import') %}{{ _active_class }}{% endif %}">
@@ -341,6 +356,9 @@
       </a>
       <a href="/breadth" class="nav-link hidden md:inline-flex {% if path.startswith('/breadth') %}active{% endif %}">
         <i data-lucide="bar-chart-3"></i>Breadth
+      </a>
+      <a href="/sector-rotation" class="nav-link hidden md:inline-flex {% if path.startswith('/sector-rotation') %}active{% endif %}">
+        <i data-lucide="git-compare-arrows"></i>Sectors
       </a>
 
       <div class="ml-auto hidden md:flex items-center gap-1">
@@ -516,6 +534,7 @@
         { label: 'Scanners',          hint: '4 EOD swing setups',               url: '/scanners',       icon: 'radar',            section: 'Page' },
         { label: 'Watchlist',         hint: 'Saved tickers + alerts',           url: '/watchlist',      icon: 'bookmark',         section: 'Page' },
         { label: 'Breadth',           hint: 'NSE adv/dec + market mood',        url: '/breadth',        icon: 'activity',         section: 'Page' },
+        { label: 'Sector Rotation',   hint: 'RRG: which sectors are leading',   url: '/sector-rotation', icon: 'git-compare-arrows', section: 'Page' },
         { label: 'Lists',             hint: 'Setup / proficiency / growth',     url: '/masterlist',     icon: 'list-checks',      section: 'Page' },
         { label: 'Import',            hint: 'Upload xlsx',                      url: '/import',         icon: 'upload',           section: 'Page' },
         { label: 'Settings',          hint: 'Capital, risk %, Kite',            url: '/settings',       icon: 'settings',         section: 'Page' },
