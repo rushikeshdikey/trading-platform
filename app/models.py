@@ -21,6 +21,9 @@ class Trade(Base):
     __tablename__ = "trades"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     trade_no: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     instrument: Mapped[str] = mapped_column(String, nullable=False, index=True)
@@ -101,9 +104,14 @@ class Exit(Base):
 
 class MasterListItem(Base):
     __tablename__ = "masterlist_items"
-    __table_args__ = (UniqueConstraint("category", "value", name="uq_category_value"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "category", "value", name="uq_user_category_value"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     category: Mapped[str] = mapped_column(String, nullable=False, index=True)
     value: Mapped[str] = mapped_column(String, nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
@@ -115,6 +123,9 @@ class CapitalEvent(Base):
     __tablename__ = "capital_events"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     amount: Mapped[float] = mapped_column(Float, nullable=False)
     note: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -123,6 +134,9 @@ class CapitalEvent(Base):
 class Setting(Base):
     __tablename__ = "settings"
 
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
     key: Mapped[str] = mapped_column(String, primary_key=True)
     value: Mapped[str] = mapped_column(String, nullable=False)
 
@@ -132,10 +146,15 @@ class ImportedExecution(Base):
 
     Used by the Zerodha import flow to skip duplicates on re-upload. Keyed by
     the broker's per-execution trade id, which is unique across the tradebook.
+    Composite PK (user_id, trade_id) so two users can have the same broker
+    trade ID without collision (each user has their own broker account).
     """
 
     __tablename__ = "imported_executions"
 
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
     trade_id: Mapped[str] = mapped_column(String, primary_key=True)
     symbol: Mapped[str] = mapped_column(String, nullable=False, index=True)
     trade_date: Mapped[date] = mapped_column(Date, nullable=False)
@@ -219,9 +238,15 @@ class Watchlist(Base):
     """User-curated watchlist. Rows land here from scanner results or manual add."""
 
     __tablename__ = "watchlist"
+    __table_args__ = (
+        UniqueConstraint("user_id", "symbol", name="uq_watchlist_user_symbol"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    symbol: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    symbol: Mapped[str] = mapped_column(String, nullable=False, index=True)
     setup_label: Mapped[str | None] = mapped_column(String, nullable=True)
     alert_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     suggested_sl: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -235,6 +260,9 @@ class ScanRun(Base):
     __tablename__ = "scan_run"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     run_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
     scan_type: Mapped[str] = mapped_column(String, nullable=False, index=True)
     universe_size: Mapped[int] = mapped_column(Integer, default=0)

@@ -1,3 +1,11 @@
+"""Per-user key/value settings.
+
+Composite PK is `(user_id, key)`. Lookups go through filtered queries — the
+`do_orm_execute` event in `orm_events.py` adds the user filter automatically
+based on the request-scoped contextvar, so callers don't pass user_id
+explicitly. Outside a request (background tasks, tests) you'd need to set
+the contextvar yourself or pass `user_id` via a future overload.
+"""
 from sqlalchemy.orm import Session
 
 from .models import Setting
@@ -5,15 +13,15 @@ from .models import Setting
 DEFAULTS = {
     "starting_capital": "1000000",
     "starting_capital_date": "2025-01-01",
-    "default_risk_pct": "0.005",  # 0.5% of capital — stored as fraction
-    "default_allocation_pct": "0.10",  # 10% — stored as fraction
-    "default_sl_pct": "0.025",  # 2.5% SL distance — stored as fraction
+    "default_risk_pct": "0.005",
+    "default_allocation_pct": "0.10",
+    "default_sl_pct": "0.025",
     "currency_symbol": "₹",
 }
 
 
 def get(db: Session, key: str, default: str | None = None) -> str | None:
-    row = db.get(Setting, key)
+    row = db.query(Setting).filter(Setting.key == key).first()
     if row is not None:
         return row.value
     return DEFAULTS.get(key, default)
@@ -28,8 +36,9 @@ def get_float(db: Session, key: str, default: float = 0.0) -> float:
 
 
 def set_value(db: Session, key: str, value: str) -> None:
-    row = db.get(Setting, key)
+    row = db.query(Setting).filter(Setting.key == key).first()
     if row is None:
+        # `before_flush` event stamps user_id from the contextvar.
         db.add(Setting(key=key, value=value))
     else:
         row.value = value

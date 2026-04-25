@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+from contextvars import ContextVar
 from datetime import datetime
 from typing import Optional
 
@@ -30,6 +31,16 @@ from sqlalchemy.orm import Session
 from .config import settings
 from .db import get_db
 from .models import User
+
+
+# Request-scoped current user id. Read by SQLAlchemy events in app/db.py to
+# auto-filter SELECTs and auto-stamp INSERTs on per-user models. Set by
+# `require_user` below; cleared by FastAPI between requests via contextvar
+# semantics. Background jobs (prices refresher, scanner bars seed) leave this
+# unset — those only touch shared tables (DailyBar, MarketBreadth, etc.).
+current_user_id_var: ContextVar[Optional[int]] = ContextVar(
+    "current_user_id", default=None
+)
 
 _hasher = PasswordHasher()
 
@@ -132,6 +143,9 @@ def require_user(
         if request.url.query:
             next_url += "?" + request.url.query
         raise _RedirectToLogin(next_url=next_url)
+    # Make the user id visible to the SQLAlchemy events that auto-filter
+    # per-user models. The contextvar reset is implicit at end of request.
+    current_user_id_var.set(user.id)
     return user
 
 

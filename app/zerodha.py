@@ -416,7 +416,6 @@ def apply_executions_append(
             result.symbols_touched.add(symbol)
 
     db.commit()
-    masterlist.seed_defaults(db)
     return result
 
 

@@ -1,4 +1,11 @@
-"""Helpers for MasterList dropdown categories."""
+"""Helpers for MasterList dropdown categories.
+
+Per-user storage. The `do_orm_execute` event filters reads to the current
+user; the `before_flush` event stamps `user_id` on inserts. So most code
+here can ignore user_id entirely. The exception is `seed_for_user` which is
+called explicitly during account creation — at that point there's no
+request context yet, so we pass `user_id` directly.
+"""
 from __future__ import annotations
 
 from sqlalchemy.orm import Session
@@ -54,12 +61,26 @@ def all_dropdowns(db: Session) -> dict[str, list[str]]:
     return {c: values(db, c) for c in CATEGORIES}
 
 
-def seed_defaults(db: Session) -> None:
-    existing = {(r.category, r.value) for r in db.query(MasterListItem).all()}
+def seed_for_user(db: Session, user_id: int) -> None:
+    """Populate default dropdowns for a freshly-created user.
+
+    Called from /setup and the admin user-create flow. Bypasses the
+    contextvar-based stamping by passing `user_id` explicitly because at
+    account-creation time the new user isn't logged in yet.
+    """
+    existing = {
+        (r.category, r.value)
+        for r in db.query(MasterListItem)
+        .filter(MasterListItem.user_id == user_id)
+        .execution_options(skip_user_filter=True)
+        .all()
+    }
     for cat, vals in DEFAULTS.items():
         for i, v in enumerate(vals):
             if (cat, v) not in existing:
-                db.add(MasterListItem(category=cat, value=v, sort_order=i))
+                db.add(MasterListItem(
+                    user_id=user_id, category=cat, value=v, sort_order=i,
+                ))
     db.commit()
 
 
@@ -88,7 +109,13 @@ def add_value(db: Session, category: str, value: str) -> None:
 
 
 def delete_value(db: Session, item_id: int) -> None:
-    row = db.get(MasterListItem, item_id)
+    """Delete a MasterListItem by id. The auto-filter ensures admin can only
+    delete their own; cross-user delete is impossible via this path."""
+    row = (
+        db.query(MasterListItem)
+        .filter(MasterListItem.id == item_id)
+        .first()
+    )
     if row:
         db.delete(row)
         db.commit()

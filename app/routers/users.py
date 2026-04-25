@@ -17,6 +17,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from .. import auth as auth_mod
+from .. import masterlist as masterlist_svc
 from ..db import get_db
 from ..deps import templates
 from ..models import User
@@ -72,6 +73,8 @@ def setup_submit(
     )
     db.add(admin)
     db.commit()
+    db.refresh(admin)
+    masterlist_svc.seed_for_user(db, admin.id)
     auth_mod.login_user(request, admin)
     return RedirectResponse(url="/", status_code=303)
 

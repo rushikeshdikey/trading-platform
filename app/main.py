@@ -6,7 +6,8 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import masterlist, prices
+from . import prices
+from . import orm_events  # noqa: F401  -- side-effect: registers SQLAlchemy events
 from .auth import _RedirectToLogin, login_redirect_response, require_user
 from .config import settings
 from .db import SessionLocal
@@ -57,9 +58,8 @@ static_dir.mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 
-with SessionLocal() as db:
-    masterlist.seed_defaults(db)
-
+# Masterlist defaults are now seeded per-user (in /setup and admin user
+# creation) instead of at boot — there's no global "current user" at boot.
 prices.start_background_refresher()
 
 
