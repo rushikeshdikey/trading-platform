@@ -261,6 +261,48 @@
         <a href="/settings" class="nav-link {% if path.startswith('/settings') %}active{% endif %}">
           <i data-lucide="settings"></i>Settings
         </a>
+
+        {# Account dropdown — only rendered for logged-in users.
+           request.state.user is populated by the _attach_user_to_request
+           middleware so we don't need to thread `user` through every route. #}
+        {% set u = request.state.user %}
+        {% if u %}
+        <div class="relative ml-1" x-data="{ open: false }" @click.away="open = false">
+          <button type="button" @click="open = !open"
+                  class="nav-link {% if path.startswith('/account') %}active{% endif %}"
+                  title="{{ u.email }}">
+            <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-zinc-900 text-white text-[11px] font-semibold">
+              {{ (u.full_name or u.email)[0]|upper }}
+            </span>
+            <i data-lucide="chevron-down" class="!w-3.5 !h-3.5 opacity-70"></i>
+          </button>
+          <div x-show="open" x-transition.opacity.duration.100ms x-cloak
+               class="absolute right-0 mt-1 w-64 bg-white border border-zinc-200 rounded-lg shadow-md py-1 text-sm z-40">
+            <div class="px-3 py-2 border-b border-zinc-100">
+              <div class="font-semibold truncate">{{ u.full_name or u.email }}</div>
+              <div class="text-xs text-zinc-500 truncate">{{ u.email }}</div>
+              {% if u.is_admin %}<span class="inline-block mt-1 text-[10px] uppercase tracking-wide bg-zinc-900 text-white px-1.5 py-0.5 rounded">Admin</span>{% endif %}
+            </div>
+            <a href="/account" class="flex items-center gap-2 px-3 py-2 hover:bg-zinc-100">
+              <i data-lucide="user" class="w-4 h-4"></i>Profile
+            </a>
+            <a href="/account/password" class="flex items-center gap-2 px-3 py-2 hover:bg-zinc-100">
+              <i data-lucide="key-round" class="w-4 h-4"></i>Change password
+            </a>
+            {% if u.is_admin %}
+            <a href="/admin/users" class="flex items-center gap-2 px-3 py-2 hover:bg-zinc-100">
+              <i data-lucide="users" class="w-4 h-4"></i>Manage users
+            </a>
+            {% endif %}
+            <div class="border-t border-zinc-100 my-1"></div>
+            <form method="post" action="/logout" class="block">
+              <button type="submit" class="w-full flex items-center gap-2 px-3 py-2 hover:bg-zinc-100 text-rose-700">
+                <i data-lucide="log-out" class="w-4 h-4"></i>Sign out
+              </button>
+            </form>
+          </div>
+        </div>
+        {% endif %}
       </div>
     </div>
 

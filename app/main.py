@@ -36,8 +36,44 @@ from .routers import (  # noqa: E402
 
 app = FastAPI(title="Trading Journal")
 
+
+@app.exception_handler(_RedirectToLogin)
+async def _redirect_to_login(_request: Request, exc: _RedirectToLogin):
+    return login_redirect_response(exc.detail)
+
+
+# Order matters: middlewares run in REVERSE order of registration. The LAST
+# `add_middleware` call ends up OUTERMOST and runs first on each request.
+# We want SessionMiddleware to run first (so .session is populated) and
+# `_attach_user_to_request` to run inside it. So we register the user-
+# attaching middleware FIRST, then SessionMiddleware second.
+
+@app.middleware("http")
+async def _attach_user_to_request(request: Request, call_next):
+    """Make the current user available to templates as ``request.state.user``.
+
+    Runs INSIDE SessionMiddleware (so .session is decoded). Looks up the
+    user once per request and caches on request.state. Does NOT enforce
+    auth — that's ``require_user``'s job.
+    """
+    request.state.user = None
+    try:
+        uid = request.session.get("user_id")
+    except AssertionError:
+        uid = None
+    if uid is not None:
+        from .models import User
+        with SessionLocal() as db:
+            u = db.get(User, uid)
+            if u is not None and u.is_active:
+                request.state.user = u
+    return await call_next(request)
+
+
 # Signed-cookie sessions. The cookie is HMAC'd with SECRET_KEY; rotating the
-# key invalidates every existing session (intentional).
+# key invalidates every existing session (intentional). Registered LAST so
+# it ends up OUTERMOST and decodes the cookie before _attach_user_to_request
+# runs.
 app.add_middleware(
     SessionMiddleware,
     secret_key=settings.secret_key,
@@ -46,11 +82,6 @@ app.add_middleware(
     same_site="lax",
     https_only=settings.is_prod,
 )
-
-
-@app.exception_handler(_RedirectToLogin)
-async def _redirect_to_login(_request: Request, exc: _RedirectToLogin):
-    return login_redirect_response(exc.detail)
 
 
 static_dir = Path(__file__).parent / "static"

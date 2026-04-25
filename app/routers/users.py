@@ -151,6 +151,44 @@ def logout(request: Request):
 # -- Change password (any logged-in user) -----------------------------------
 
 
+@router.get("/account", response_class=HTMLResponse)
+def account_page(
+    request: Request,
+    user: User = Depends(auth_mod.require_user),
+    db: Session = Depends(get_db),
+):
+    """Profile page — shows user info, recent activity, and links to change
+    password / manage Kite credentials (M3)."""
+    from ..models import Trade, Watchlist, ScanRun
+
+    stats = {
+        "trades": db.query(Trade).count(),
+        "open_trades": db.query(Trade).filter(Trade.status == "open").count(),
+        "watchlist": db.query(Watchlist).count(),
+        "scans_run": db.query(ScanRun).count(),
+    }
+    return templates.TemplateResponse(
+        request, "auth/account.html",
+        {
+            "user": user,
+            "stats": stats,
+            "ok": request.query_params.get("ok"),
+        },
+    )
+
+
+@router.post("/account")
+def account_update(
+    request: Request,
+    full_name: str = Form(""),
+    user: User = Depends(auth_mod.require_user),
+    db: Session = Depends(get_db),
+):
+    user.full_name = full_name.strip() or None
+    db.commit()
+    return RedirectResponse(url="/account?ok=1", status_code=303)
+
+
 @router.get("/account/password", response_class=HTMLResponse)
 def change_password_page(
     request: Request,
