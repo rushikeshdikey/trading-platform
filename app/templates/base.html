@@ -446,6 +446,126 @@
   <main class="mx-auto px-4 md:px-6 w-full py-4 md:py-6 pb-[env(safe-area-inset-bottom)]">
     {% block content %}{% endblock %}
   </main>
+
+  {# ============================================================
+     Cmd-K / Ctrl-K Spotlight — global finder over routes & actions.
+     Open: ⌘K / Ctrl+K (or "/" when not focused on input). Close: Esc.
+     Pure Alpine.js — no backend round-trip.
+     ============================================================ #}
+  <div x-data="spotlight()"
+       @keydown.window.meta.k.prevent="open = true; $nextTick(() => $refs.q.focus())"
+       @keydown.window.ctrl.k.prevent="open = true; $nextTick(() => $refs.q.focus())"
+       @keydown.window="onGlobalKey($event)">
+    <div x-show="open" x-cloak x-transition.opacity.duration.100ms
+         @click="open = false"
+         class="fixed inset-0 bg-black/40 z-50 flex items-start justify-center pt-[12vh] px-4">
+      <div @click.stop x-show="open" x-transition.scale.origin.top.duration.150ms
+           class="w-full max-w-xl bg-white rounded-xl shadow-2xl border border-zinc-200 overflow-hidden">
+        <div class="flex items-center gap-2 px-3 py-2.5 border-b border-zinc-100">
+          <i data-lucide="search" class="w-4 h-4 text-zinc-400"></i>
+          <input x-ref="q" x-model="q" type="text" placeholder="Jump to…"
+                 @keydown.escape="open = false"
+                 @keydown.arrow-down.prevent="cursor = Math.min(cursor + 1, results.length - 1)"
+                 @keydown.arrow-up.prevent="cursor = Math.max(cursor - 1, 0)"
+                 @keydown.enter.prevent="go(results[cursor])"
+                 class="flex-1 bg-transparent outline-none text-sm py-1">
+          <kbd class="text-[10px] px-1.5 py-0.5 bg-zinc-100 rounded text-zinc-500">Esc</kbd>
+        </div>
+        <div class="max-h-[50vh] overflow-y-auto py-1">
+          <template x-for="(item, idx) in results" :key="item.url + ':' + item.label">
+            <button type="button"
+                    @click="go(item)"
+                    @mouseenter="cursor = idx"
+                    :class="cursor === idx ? 'bg-zinc-100' : ''"
+                    class="w-full text-left flex items-center gap-3 px-3 py-2 hover:bg-zinc-100">
+              <i :data-lucide="item.icon" class="w-4 h-4 text-zinc-500 shrink-0"></i>
+              <div class="min-w-0 flex-1">
+                <div class="text-sm font-medium truncate" x-text="item.label"></div>
+                <div class="text-xs text-zinc-500 truncate" x-text="item.hint"></div>
+              </div>
+              <span class="text-[10px] text-zinc-400 shrink-0" x-text="item.section"></span>
+            </button>
+          </template>
+          <div x-show="results.length === 0" class="px-3 py-6 text-sm text-zinc-500 text-center">
+            No matches.
+          </div>
+        </div>
+        <div class="px-3 py-1.5 border-t border-zinc-100 flex items-center gap-3 text-[10px] text-zinc-500">
+          <span><kbd class="px-1 bg-zinc-100 rounded">↑</kbd> <kbd class="px-1 bg-zinc-100 rounded">↓</kbd> nav</span>
+          <span><kbd class="px-1 bg-zinc-100 rounded">↵</kbd> open</span>
+          <span class="ml-auto">⌘K to open from anywhere</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Static catalogue of jumpable destinations. Fuzzy-matched client-side
+    // by label + hint + section. Ordered roughly by how often I reach for
+    // each — matters because results preserve order on equal scores.
+    function spotlight() {
+      const ITEMS = [
+        // Pages
+        { label: 'Cockpit',           hint: 'Daily decision support',           url: '/cockpit',        icon: 'layout-dashboard', section: 'Page' },
+        { label: 'Dashboard',         hint: 'Year P/L, equity curve',           url: '/dashboard',      icon: 'line-chart',       section: 'Page' },
+        { label: 'Trades — open',     hint: 'Open positions',                   url: '/trades?status=open',  icon: 'list',        section: 'Page' },
+        { label: 'Trades — closed',   hint: 'Closed positions',                 url: '/trades?status=closed', icon: 'archive',    section: 'Page' },
+        { label: 'Trades — all',      hint: 'Full trade history',               url: '/trades',         icon: 'list',             section: 'Page' },
+        { label: 'New trade',         hint: '3-step wizard',                    url: '/trades/new',     icon: 'file-plus',        section: 'Action' },
+        { label: 'Position sizer',    hint: 'Risk + allocation methods',        url: '/sizing',         icon: 'scale',            section: 'Page' },
+        { label: 'Scanners',          hint: '4 EOD swing setups',               url: '/scanners',       icon: 'radar',            section: 'Page' },
+        { label: 'Watchlist',         hint: 'Saved tickers + alerts',           url: '/watchlist',      icon: 'bookmark',         section: 'Page' },
+        { label: 'Breadth',           hint: 'NSE adv/dec + market mood',        url: '/breadth',        icon: 'activity',         section: 'Page' },
+        { label: 'Lists',             hint: 'Setup / proficiency / growth',     url: '/masterlist',     icon: 'list-checks',      section: 'Page' },
+        { label: 'Import',            hint: 'Upload xlsx',                      url: '/import',         icon: 'upload',           section: 'Page' },
+        { label: 'Settings',          hint: 'Capital, risk %, Kite',            url: '/settings',       icon: 'settings',         section: 'Page' },
+        { label: 'Account',           hint: 'Profile + change password',        url: '/account',        icon: 'user',             section: 'Page' },
+        // Specific scanners
+        { label: 'Horizontal Resistance scan', hint: 'Cluster of prior highs',   url: '/scanners',       icon: 'minus-square',     section: 'Scanner' },
+        { label: 'Trendline Setup scan',       hint: 'Rising trendline ≥3 lows', url: '/scanners',       icon: 'trending-up',      section: 'Scanner' },
+        { label: 'Tight Setup scan',           hint: 'ATR-contracted base',      url: '/scanners',       icon: 'minimize-2',       section: 'Scanner' },
+        { label: 'Tightness Trading scan',     hint: 'Ankur Patel 5-phase',      url: '/scanners',       icon: 'target',           section: 'Scanner' },
+      ];
+
+      return {
+        open: false, q: '', cursor: 0,
+        get results() {
+          const q = this.q.trim().toLowerCase();
+          if (!q) return ITEMS;
+          // Tiny scoring: exact substring in label > hint > section.
+          const scored = ITEMS.map(it => {
+            const hay = (it.label + ' ' + it.hint + ' ' + it.section).toLowerCase();
+            if (!hay.includes(q)) return null;
+            let s = 0;
+            if (it.label.toLowerCase().startsWith(q)) s += 100;
+            else if (it.label.toLowerCase().includes(q)) s += 60;
+            if (it.hint.toLowerCase().includes(q))  s += 20;
+            return { item: it, s };
+          }).filter(Boolean);
+          scored.sort((a, b) => b.s - a.s);
+          // Reset cursor when results change.
+          if (this.cursor >= scored.length) this.cursor = 0;
+          return scored.map(x => x.item);
+        },
+        onGlobalKey(e) {
+          if (e.key === 'Escape' && this.open) { this.open = false; return; }
+          // "/" opens spotlight unless focus is in an input.
+          if (e.key === '/' && !this.open) {
+            const t = e.target;
+            if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+            e.preventDefault();
+            this.open = true;
+            this.$nextTick(() => this.$refs.q.focus());
+          }
+        },
+        go(item) {
+          if (!item) return;
+          this.open = false;
+          window.location.href = item.url;
+        },
+      };
+    }
+  </script>
   <script>
     // Initialise Lucide icons once on load and once more after Alpine has
     // settled. Do NOT use a MutationObserver: lucide replaces [data-lucide]
