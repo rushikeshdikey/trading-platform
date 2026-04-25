@@ -1,0 +1,15 @@
+{
+  "name": "Trading Journal",
+  "short_name": "Trading",
+  "description": "Daily cockpit, scanners, and trade journal for Indian swing traders.",
+  "start_url": "/cockpit",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#fafafa",
+  "theme_color": "#18181b",
+  "orientation": "portrait-primary",
+  "icons": [
+    { "src": "/static/logo.svg",     "type": "image/svg+xml", "sizes": "any" },
+    { "src": "/static/favicon.svg",  "type": "image/svg+xml", "sizes": "any", "purpose": "maskable" }
+  ]
+}

@@ -16,58 +16,108 @@
   <a href="/trades?status=all" class="px-3 py-1.5 rounded text-sm font-medium {% if status == 'all' %}bg-zinc-900 text-white{% else %}text-zinc-600 hover:bg-zinc-100{% endif %}">All</a>
 </div>
 
-<div class="card overflow-x-auto">
+<div class="card">
   {% if trades %}
-  <table class="jrnl">
-    <thead>
-      <tr>
-        <th>#</th>
-        <th>Date</th>
-        <th>Instrument</th>
-        <th>Setup</th>
-        <th class="text-right">Entry</th>
-        <th class="text-right">Exit</th>
-        <th class="text-right">Qty</th>
-        <th class="text-right">Move</th>
-        <th class="text-right">P/L</th>
-        <th class="text-right">R:R</th>
-        <th class="text-right">Days</th>
-        <th>Status</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for t in trades %}
-        {% set m = metrics_for[t.id] %}
-        <tr class="cursor-pointer" onclick="window.location='/trades/{{ t.id }}'">
-          <td class="text-zinc-400">{{ t.trade_no or t.id }}</td>
-          <td>{{ t.entry_date | shortdate }}</td>
-          <td class="font-semibold">
-            {{ t.instrument }}
-            {% if t.side == 'S' %}<span class="pill bg-rose-50 text-rose-700 ml-1">Short</span>{% endif %}
-          </td>
-          <td class="text-zinc-600">{{ t.setup or '—' }}</td>
-          <td class="text-right tabular-nums">{{ m.avg_entry | num }}</td>
-          <td class="text-right tabular-nums">{% if m.avg_exit is not none %}{{ m.avg_exit | num }}{% else %}<span class="text-zinc-400">—</span>{% endif %}</td>
-          <td class="text-right tabular-nums">{{ m.exited_qty }}<span class="text-zinc-400">/{{ m.total_qty }}</span></td>
-          <td class="text-right tabular-nums {{ m.stock_move_pct | pnl_color if m.stock_move_pct is not none else '' }}">
-            {% if m.stock_move_pct is not none %}{{ m.stock_move_pct | pct_signed }}{% else %}—{% endif %}
-          </td>
-          <td class="text-right tabular-nums {{ m.pnl_rs | pnl_color }}">
-            {% if m.pnl_rs %}{{ m.pnl_rs | inr_signed }}{% else %}—{% endif %}
-          </td>
-          <td class="text-right tabular-nums">{% if m.reward_risk is not none %}{{ "%.2f" | format(m.reward_risk) }}R{% else %}—{% endif %}</td>
-          <td class="text-right tabular-nums">{{ m.holding_days }}</td>
-          <td>
-            {% if t.status == 'open' %}
-              <span class="pill bg-amber-100 text-amber-800">Open</span>
-            {% else %}
-              <span class="pill bg-zinc-100 text-zinc-700">Closed</span>
-            {% endif %}
-          </td>
+  {# Desktop table — full info density. #}
+  <div class="overflow-x-auto hidden md:block">
+    <table class="jrnl">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Date</th>
+          <th>Instrument</th>
+          <th>Setup</th>
+          <th class="text-right">Entry</th>
+          <th class="text-right">Exit</th>
+          <th class="text-right">Qty</th>
+          <th class="text-right">Move</th>
+          <th class="text-right">P/L</th>
+          <th class="text-right">R:R</th>
+          <th class="text-right">Days</th>
+          <th>Status</th>
         </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+      </thead>
+      <tbody>
+        {% for t in trades %}
+          {% set m = metrics_for[t.id] %}
+          <tr class="cursor-pointer" onclick="window.location='/trades/{{ t.id }}'">
+            <td class="text-zinc-400">{{ t.trade_no or t.id }}</td>
+            <td>{{ t.entry_date | shortdate }}</td>
+            <td class="font-semibold">
+              {{ t.instrument }}
+              {% if t.side == 'S' %}<span class="pill bg-rose-50 text-rose-700 ml-1">Short</span>{% endif %}
+            </td>
+            <td class="text-zinc-600">{{ t.setup or '—' }}</td>
+            <td class="text-right tabular-nums">{{ m.avg_entry | num }}</td>
+            <td class="text-right tabular-nums">{% if m.avg_exit is not none %}{{ m.avg_exit | num }}{% else %}<span class="text-zinc-400">—</span>{% endif %}</td>
+            <td class="text-right tabular-nums">{{ m.exited_qty }}<span class="text-zinc-400">/{{ m.total_qty }}</span></td>
+            <td class="text-right tabular-nums {{ m.stock_move_pct | pnl_color if m.stock_move_pct is not none else '' }}">
+              {% if m.stock_move_pct is not none %}{{ m.stock_move_pct | pct_signed }}{% else %}—{% endif %}
+            </td>
+            <td class="text-right tabular-nums {{ m.pnl_rs | pnl_color }}">
+              {% if m.pnl_rs %}{{ m.pnl_rs | inr_signed }}{% else %}—{% endif %}
+            </td>
+            <td class="text-right tabular-nums">{% if m.reward_risk is not none %}{{ "%.2f" | format(m.reward_risk) }}R{% else %}—{% endif %}</td>
+            <td class="text-right tabular-nums">{{ m.holding_days }}</td>
+            <td>
+              {% if t.status == 'open' %}
+                <span class="pill bg-amber-100 text-amber-800">Open</span>
+              {% else %}
+                <span class="pill bg-zinc-100 text-zinc-700">Closed</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {# Mobile cards. Symbol + status big at top, key metrics in a 3-col grid. #}
+  <div class="md:hidden divide-y divide-zinc-100">
+    {% for t in trades %}
+      {% set m = metrics_for[t.id] %}
+      <a href="/trades/{{ t.id }}" class="block p-4 hover:bg-zinc-50 active:bg-zinc-100">
+        <div class="flex items-start justify-between gap-3 mb-2">
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-2 mb-0.5 flex-wrap">
+              <span class="font-semibold text-base">{{ t.instrument }}</span>
+              {% if t.side == 'S' %}<span class="pill bg-rose-50 text-rose-700 border-rose-200 text-[10px]">Short</span>{% endif %}
+              {% if t.status == 'open' %}
+                <span class="pill bg-amber-100 text-amber-800 border-amber-200 text-[10px]">Open</span>
+              {% else %}
+                <span class="pill bg-zinc-100 text-zinc-700 border-zinc-200 text-[10px]">Closed</span>
+              {% endif %}
+            </div>
+            <div class="text-xs text-zinc-500 truncate">
+              #{{ t.trade_no or t.id }} · {{ t.entry_date | shortdate }} · {{ t.setup or '—' }}
+            </div>
+          </div>
+          {% if m.pnl_rs %}
+          <div class="text-right shrink-0">
+            <div class="text-[10px] text-zinc-400 uppercase tracking-wide">P/L</div>
+            <div class="font-semibold tabular-nums {{ m.pnl_rs | pnl_color }}">{{ m.pnl_rs | inr_signed }}</div>
+          </div>
+          {% endif %}
+        </div>
+        <div class="grid grid-cols-3 gap-2 text-xs">
+          <div>
+            <div class="text-zinc-400 text-[10px] uppercase tracking-wide">Entry / Exit</div>
+            <div class="font-semibold tabular-nums">
+              {{ m.avg_entry | num }}{% if m.avg_exit is not none %} / {{ m.avg_exit | num }}{% endif %}
+            </div>
+          </div>
+          <div>
+            <div class="text-zinc-400 text-[10px] uppercase tracking-wide">R:R</div>
+            <div class="font-semibold tabular-nums">{% if m.reward_risk is not none %}{{ "%.2f" | format(m.reward_risk) }}R{% else %}—{% endif %}</div>
+          </div>
+          <div>
+            <div class="text-zinc-400 text-[10px] uppercase tracking-wide">Days · Qty</div>
+            <div class="font-semibold tabular-nums">{{ m.holding_days }}d · {{ m.exited_qty }}/{{ m.total_qty }}</div>
+          </div>
+        </div>
+      </a>
+    {% endfor %}
+  </div>
   {% else %}
     <div class="p-16 text-center">
       <div class="text-zinc-400 text-4xl mb-4">◌</div>

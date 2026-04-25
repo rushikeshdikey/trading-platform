@@ -14,7 +14,8 @@
     No A/A+ conviction setups today. That's OK — sit out is a position too.
   </div>
 {% else %}
-  <div class="overflow-x-auto">
+  {# Desktop table #}
+  <div class="overflow-x-auto hidden md:block">
     <table class="jrnl">
       <thead>
         <tr>
@@ -66,6 +67,72 @@
         {% endfor %}
       </tbody>
     </table>
+  </div>
+
+  {# Mobile cards #}
+  <div class="md:hidden divide-y divide-zinc-100">
+    {% for s in signals %}
+    {% set c = s.candidate %}
+    {% set sz = s.sizing %}
+    <div class="p-4">
+      <div class="flex items-start justify-between gap-3 mb-2">
+        <div class="min-w-0 flex-1">
+          <div class="flex items-center gap-2 mb-0.5">
+            <span class="pill text-[11px] font-bold border
+              {% if s.tier == 'A+' %}bg-emerald-100 text-emerald-800 border-emerald-300
+              {% elif s.tier == 'A' %}bg-emerald-50 text-emerald-700 border-emerald-200
+              {% else %}bg-zinc-100 text-zinc-700 border-zinc-200{% endif %}">{{ s.tier }}</span>
+            <span class="font-semibold text-base">{{ c.symbol }}</span>
+          </div>
+          <div class="text-xs text-zinc-500">{{ s.scan_label }} · score {{ s.conviction }}</div>
+        </div>
+        <div class="text-right shrink-0">
+          <div class="text-[10px] text-zinc-400 uppercase tracking-wide">Close</div>
+          <div class="font-semibold tabular-nums">₹{{ '{:,.0f}'.format(c.close) }}</div>
+        </div>
+      </div>
+      <div class="grid grid-cols-3 gap-2 text-xs mb-3">
+        <div>
+          <div class="text-zinc-400 text-[10px] uppercase tracking-wide">Entry</div>
+          <div class="font-semibold tabular-nums">₹{{ '{:,.2f}'.format(c.suggested_entry) }}</div>
+        </div>
+        <div>
+          <div class="text-zinc-400 text-[10px] uppercase tracking-wide">SL</div>
+          <div class="font-semibold tabular-nums text-rose-700">₹{{ '{:,.2f}'.format(c.suggested_sl) }}</div>
+        </div>
+        <div>
+          <div class="text-zinc-400 text-[10px] uppercase tracking-wide">Qty (low / high)</div>
+          <div class="font-semibold tabular-nums">{{ sz.qty_low }} / {{ sz.qty_high }}</div>
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        <a class="btn btn-primary !py-2 !px-3 flex-1 justify-center text-xs"
+           href="/trades/new?instrument={{ c.symbol }}&entry_price={{ c.suggested_entry }}&sl={{ c.suggested_sl }}&qty={{ sz.qty_high }}&setup={{ s.scan_label|urlencode }}">
+          <i data-lucide="file-plus"></i>Plan
+        </a>
+        <a class="btn btn-outline !py-2 !px-3 text-xs"
+           href="https://www.tradingview.com/chart/?symbol=NSE:{{ c.symbol }}"
+           target="_blank" rel="noopener" aria-label="Open chart">
+          <i data-lucide="line-chart"></i>
+        </a>
+        {% if s.on_watchlist %}
+          <span class="pill bg-zinc-100 text-zinc-500 border-zinc-200 text-[10px]">Watching</span>
+        {% else %}
+          <form method="post" action="/watchlist/add">
+            <input type="hidden" name="symbol" value="{{ c.symbol }}">
+            <input type="hidden" name="setup_label" value="{{ s.scan_label }}">
+            <input type="hidden" name="alert_price" value="{{ c.suggested_entry }}">
+            <input type="hidden" name="suggested_sl" value="{{ c.suggested_sl }}">
+            <input type="hidden" name="notes" value="Conv {{ s.conviction }} ({{ s.tier }})">
+            <input type="hidden" name="return_to" value="/cockpit">
+            <button class="btn btn-outline !py-2 !px-3 text-xs" aria-label="Save to watchlist">
+              <i data-lucide="bookmark"></i>
+            </button>
+          </form>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
   </div>
   <script>if(window.lucide) window.lucide.createIcons();</script>
 {% endif %}

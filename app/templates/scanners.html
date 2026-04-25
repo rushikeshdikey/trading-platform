@@ -156,11 +156,43 @@
       {% endfor %}
     </div>
 
-    <!-- Filter sidebar + table -->
-    <div class="grid lg:grid-cols-[220px_1fr] gap-0">
+    {# Mobile-only "Filters" button — opens the sidebar as a slide-up sheet. #}
+    <div class="lg:hidden px-4 py-3 border-b border-zinc-100 flex items-center gap-2"
+         x-data="{}"
+         x-init="$el.parentElement.querySelector('aside')">
+      <button type="button"
+              @click="filterSheetOpen = true"
+              class="btn btn-outline !py-2 !px-3 text-xs">
+        <i data-lucide="filter"></i>Filters
+        <span class="text-[10px] text-zinc-500" x-text="visibleCount + ' / {{ unified.rows|length }}'"></span>
+      </button>
+      <div class="ml-auto text-xs text-zinc-500" x-text="visibleCount + ' of {{ unified.rows|length }} shown'"></div>
+    </div>
 
-      <!-- Sidebar -->
-      <aside class="border-r border-zinc-100 p-4 space-y-5 lg:sticky lg:top-[120px] lg:self-start">
+    {# Backdrop for the mobile filter sheet. #}
+    <div x-show="filterSheetOpen" x-cloak
+         x-transition.opacity.duration.150ms
+         @click="filterSheetOpen = false"
+         class="lg:hidden fixed inset-0 bg-black/40 z-30"></div>
+
+    <!-- Filter sidebar + table -->
+    <div class="lg:grid lg:grid-cols-[220px_1fr] gap-0">
+
+      {# Sidebar — desktop: left rail. Mobile: slide-up bottom sheet. #}
+      <aside class="border-r border-zinc-100 p-4 space-y-5 lg:sticky lg:top-[120px] lg:self-start
+                    max-lg:fixed max-lg:inset-x-0 max-lg:bottom-0 max-lg:z-40
+                    max-lg:bg-white max-lg:rounded-t-2xl max-lg:shadow-2xl
+                    max-lg:max-h-[80vh] max-lg:overflow-y-auto
+                    max-lg:transition-transform max-lg:duration-200"
+             :class="{ 'max-lg:translate-y-0': filterSheetOpen, 'max-lg:translate-y-full': !filterSheetOpen }"
+             x-cloak>
+        {# Backdrop + close handle, mobile only. #}
+        <div class="lg:hidden -m-4 mb-3 px-4 py-3 border-b border-zinc-100 flex items-center justify-between sticky top-0 bg-white z-10">
+          <span class="font-semibold text-sm">Filters</span>
+          <button type="button" @click="filterSheetOpen = false" class="p-2 -mr-2 rounded hover:bg-zinc-100">
+            <i data-lucide="x" class="w-5 h-5"></i>
+          </button>
+        </div>
         <div>
           <div class="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-2">Setup</div>
           <div class="space-y-1.5">
@@ -230,8 +262,8 @@
         </div>
       </aside>
 
-      <!-- Table -->
-      <div class="overflow-x-auto" tabindex="0" @keydown.window="onKey($event)">
+      <!-- Table (desktop) -->
+      <div class="overflow-x-auto hidden md:block" tabindex="0" @keydown.window="onKey($event)">
         <table class="jrnl">
           <thead>
             <tr>
@@ -331,6 +363,79 @@
             {% endfor %}
           </tbody>
         </table>
+      </div>
+
+      {# Mobile cards — same data, vertical layout. Sparkline + tier headline,
+         per-row buttons sized for thumbs. #}
+      <div class="md:hidden divide-y divide-zinc-100">
+        {% for row in unified.rows %}
+        {% set c = row.primary %}
+        {% set s = row.sizing %}
+        <div x-show="rowVisible({{ loop.index0 }})"
+             :class="selected.has('{{ c.symbol }}') ? 'bg-emerald-50/40' : ''"
+             class="p-4">
+          <div class="flex items-start gap-3 mb-3">
+            <input type="checkbox" :checked="selected.has('{{ c.symbol }}')"
+                   @change="toggle('{{ c.symbol }}')"
+                   class="mt-1 rounded border-zinc-300 w-5 h-5">
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-2 mb-0.5 flex-wrap">
+                <span class="pill text-[11px] font-bold border
+                  {% if row.tier == 'A+' %}bg-emerald-100 text-emerald-800 border-emerald-300
+                  {% elif row.tier == 'A' %}bg-emerald-50 text-emerald-700 border-emerald-200
+                  {% else %}bg-zinc-100 text-zinc-700 border-zinc-200{% endif %}">{{ row.tier }}</span>
+                <span class="font-semibold text-base">{{ c.symbol }}</span>
+                {% if row.sparkline %}<span class="ml-auto">{{ row.sparkline|safe }}</span>{% endif %}
+              </div>
+              <div class="flex flex-wrap gap-1 mt-1">
+                {% for sc in row.scans %}
+                  <span class="pill text-[10px] bg-sky-50 text-sky-700 border-sky-200 font-medium">{{ sc.label }}</span>
+                {% endfor %}
+              </div>
+            </div>
+          </div>
+          <div class="grid grid-cols-3 gap-2 text-xs mb-3 pl-8">
+            <div>
+              <div class="text-zinc-400 text-[10px] uppercase tracking-wide">Close / Score</div>
+              <div class="font-semibold tabular-nums">₹{{ '{:,.0f}'.format(c.close) }} · {{ '{:.0f}'.format(c.score) }}</div>
+            </div>
+            <div>
+              <div class="text-zinc-400 text-[10px] uppercase tracking-wide">Entry / SL</div>
+              <div class="font-semibold tabular-nums">₹{{ '{:,.0f}'.format(c.suggested_entry) }} <span class="text-rose-700">/ {{ '{:,.0f}'.format(c.suggested_sl) }}</span></div>
+            </div>
+            <div>
+              <div class="text-zinc-400 text-[10px] uppercase tracking-wide">Qty</div>
+              <div class="font-semibold tabular-nums">{{ s.qty_low }} / {{ s.qty_high }}</div>
+            </div>
+          </div>
+          <div class="flex items-center gap-2 pl-8">
+            <a class="btn btn-primary !py-2 !px-3 flex-1 justify-center text-xs"
+               href="/trades/new?instrument={{ c.symbol }}&entry_price={{ c.suggested_entry }}&sl={{ c.suggested_sl }}&qty={{ s.qty_high }}&setup={{ row.scans[0].label|urlencode }}">
+              <i data-lucide="file-plus"></i>Plan
+            </a>
+            <a class="btn btn-outline !py-2 !px-3 text-xs"
+               href="https://www.tradingview.com/chart/?symbol=NSE:{{ c.symbol }}"
+               target="_blank" rel="noopener" aria-label="Chart">
+              <i data-lucide="line-chart"></i>
+            </a>
+            {% if row.on_watchlist %}
+              <span class="pill bg-zinc-100 text-zinc-500 border-zinc-200 text-[10px]">Watching</span>
+            {% else %}
+              <form method="post" action="/watchlist/add">
+                <input type="hidden" name="symbol" value="{{ c.symbol }}">
+                <input type="hidden" name="setup_label" value="{{ row.scans[0].label }}">
+                <input type="hidden" name="alert_price" value="{{ c.suggested_entry }}">
+                <input type="hidden" name="suggested_sl" value="{{ c.suggested_sl }}">
+                <input type="hidden" name="notes" value="Tier {{ row.tier }} · score {{ '{:.0f}'.format(c.score) }}">
+                <input type="hidden" name="return_to" value="/scanners">
+                <button class="btn btn-outline !py-2 !px-3 text-xs" aria-label="Save to watchlist">
+                  <i data-lucide="bookmark"></i>
+                </button>
+              </form>
+            {% endif %}
+          </div>
+        </div>
+        {% endfor %}
       </div>
     </div>
     {% endif %}
@@ -699,6 +804,9 @@
         batchSize: 0,
         batchIdx: 0,
         toast: '',
+
+        // Mobile filter sheet
+        filterSheetOpen: false,
 
         // Filters
         setupFilter: { ...defaultSetup },
