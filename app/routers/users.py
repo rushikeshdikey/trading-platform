@@ -17,6 +17,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from .. import auth as auth_mod
+from .. import kite
 from .. import masterlist as masterlist_svc
 from ..db import get_db
 from ..deps import templates
@@ -157,8 +158,7 @@ def account_page(
     user: User = Depends(auth_mod.require_user),
     db: Session = Depends(get_db),
 ):
-    """Profile page — shows user info, recent activity, and links to change
-    password / manage Kite credentials (M3)."""
+    """Profile page — info, stats, change password, Kite credentials."""
     from ..models import Trade, Watchlist, ScanRun
 
     stats = {
@@ -172,7 +172,12 @@ def account_page(
         {
             "user": user,
             "stats": stats,
+            "kite": kite.auth_status(user),
             "ok": request.query_params.get("ok"),
+            "kite_connected": request.query_params.get("kite_connected"),
+            "kite_synced": request.query_params.get("kite_synced"),
+            "kite_error": request.query_params.get("kite_error"),
+            "kite_creds_saved": request.query_params.get("kite_creds_saved"),
         },
     )
 
@@ -187,6 +192,25 @@ def account_update(
     user.full_name = full_name.strip() or None
     db.commit()
     return RedirectResponse(url="/account?ok=1", status_code=303)
+
+
+@router.post("/account/kite-credentials")
+def save_kite_credentials(
+    api_key: str = Form(""),
+    api_secret: str = Form(""),
+    user: User = Depends(auth_mod.require_user),
+    db: Session = Depends(get_db),
+):
+    """Encrypt and store the user's Kite developer-app credentials."""
+    api_key = api_key.strip()
+    api_secret = api_secret.strip()
+    # Empty means "leave unchanged" — only blank both to clear.
+    kite.save_credentials(
+        db, user,
+        api_key=api_key or None,
+        api_secret=api_secret or None,
+    )
+    return RedirectResponse(url="/account?kite_creds_saved=1", status_code=303)
 
 
 @router.get("/account/password", response_class=HTMLResponse)

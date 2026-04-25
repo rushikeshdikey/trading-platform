@@ -4,16 +4,21 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
+from .. import auth as user_auth
 from .. import kite, settings as app_settings
 from ..db import get_db
 from ..deps import templates
-from ..models import CapitalEvent, KiteInstrument
+from ..models import CapitalEvent, KiteInstrument, User
 
 router = APIRouter(prefix="/settings")
 
 
 @router.get("", response_class=HTMLResponse)
-def settings_page(request: Request, db: Session = Depends(get_db)):
+def settings_page(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(user_auth.require_user),
+):
     events = db.query(CapitalEvent).order_by(CapitalEvent.date.desc()).all()
     instrument_count = db.query(KiteInstrument).count()
     return templates.TemplateResponse(
@@ -22,7 +27,7 @@ def settings_page(request: Request, db: Session = Depends(get_db)):
         {
             "settings": app_settings.all_settings(db),
             "events": events,
-            "kite": kite.auth_status(db),
+            "kite": kite.auth_status(user),
             "kite_instrument_count": instrument_count,
         },
     )

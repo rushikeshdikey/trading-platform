@@ -1,10 +1,16 @@
-"""Zerodha Kite Connect integration.
+"""Zerodha Kite Connect integration — per-user.
 
-Handles: OAuth-style login (request_token → access_token), daily token
-persistence in the Setting table, LTP lookup, and instrument master download.
+Each user has their own Kite developer-app credentials (api_key + api_secret)
+stored as Fernet-encrypted blobs on the User row. The daily access_token also
+lives there. Kite's access_token rolls at ~06:00 IST; we store
+`kite_token_expires_at` and treat anything past it as logged out.
 
-Kite's access_token is valid until ~06:00 IST the next day. We store it with
-the date it was obtained; anything not dated today is treated as expired.
+Public API takes a `User` parameter throughout. The env-var creds in
+`app/config.py` are a fallback ONLY when a user hasn't supplied their own
+keys yet — useful for the bootstrap admin during initial setup.
+
+Instrument-master sync writes to a SHARED table (`kite_instruments`) so
+every user benefits from one user's sync; any authed user can refresh it.
 """
 from __future__ import annotations
 
@@ -14,115 +20,175 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from . import auth as auth_mod
 from . import config
-from . import settings as app_settings
+from .models import User
 
 log = logging.getLogger("journal.kite")
 
 IST = timezone(timedelta(hours=5, minutes=30))
-_TOKEN_KEY = "kite_access_token"
-_TOKEN_DATE_KEY = "kite_access_token_date"
-_USER_ID_KEY = "kite_user_id"
-_USER_NAME_KEY = "kite_user_name"
 
 
 def _today_ist() -> date:
-    """Kite rolls tokens at 06:00 IST — treat anything before that as "still yesterday"."""
+    """Kite rolls tokens at ~06:00 IST — anything before that is "still yesterday"."""
     now = datetime.now(tz=IST)
     if now.time() < dtime(6, 0):
         return (now - timedelta(days=1)).date()
     return now.date()
 
 
-def is_authed(db: Session) -> bool:
-    token = app_settings.get(db, _TOKEN_KEY)
-    token_date = app_settings.get(db, _TOKEN_DATE_KEY)
-    if not token or not token_date:
-        return False
-    try:
-        d = datetime.strptime(token_date, "%Y-%m-%d").date()
-    except ValueError:
-        return False
-    return d >= _today_ist()
+# -- Per-user credential resolution -----------------------------------------
 
 
-def auth_status(db: Session) -> dict[str, Any]:
+def _api_key(user: User) -> str | None:
+    """User-stored key; falls back to env (bootstrap admin convenience)."""
+    if user.kite_api_key_enc:
+        try:
+            return auth_mod.decrypt_str(user.kite_api_key_enc)
+        except Exception:  # noqa: BLE001
+            log.exception("failed to decrypt kite_api_key for user_id=%s", user.id)
+    return config.settings.kite_api_key
+
+
+def _api_secret(user: User) -> str | None:
+    if user.kite_api_secret_enc:
+        try:
+            return auth_mod.decrypt_str(user.kite_api_secret_enc)
+        except Exception:  # noqa: BLE001
+            log.exception("failed to decrypt kite_api_secret for user_id=%s", user.id)
+    return config.settings.kite_api_secret
+
+
+def _access_token(user: User) -> str | None:
+    if user.kite_access_token_enc:
+        try:
+            return auth_mod.decrypt_str(user.kite_access_token_enc)
+        except Exception:  # noqa: BLE001
+            return None
+    return None
+
+
+def is_configured(user: User) -> bool:
+    return bool(_api_key(user) and _api_secret(user))
+
+
+def is_authed(user: User) -> bool:
+    if not _access_token(user):
+        return False
+    if user.kite_token_expires_at is None:
+        return False
+    # Stored as a UTC-naive datetime; convert _today_ist to a naive comparison.
+    return user.kite_token_expires_at >= datetime.utcnow()
+
+
+def auth_status(user: User) -> dict[str, Any]:
     return {
-        "configured": config.kite_configured(),
-        "authed": is_authed(db),
-        "user_id": app_settings.get(db, _USER_ID_KEY),
-        "user_name": app_settings.get(db, _USER_NAME_KEY),
-        "token_date": app_settings.get(db, _TOKEN_DATE_KEY),
+        "configured": is_configured(user),
+        "authed": is_authed(user),
+        "user_id": None,  # Kite user id — not exposed in this minimal status
+        "user_name": None,
+        "token_expires_at": (
+            user.kite_token_expires_at.isoformat()
+            if user.kite_token_expires_at else None
+        ),
     }
 
 
-def login_url() -> str:
-    """URL to send the user to for the Kite login flow."""
-    if not config.KITE_API_KEY:
-        raise RuntimeError("KITE_API_KEY not configured")
+# -- OAuth-ish flow ---------------------------------------------------------
+
+
+def login_url(user: User) -> str:
+    """URL the user is sent to for the Kite login flow."""
+    api_key = _api_key(user)
+    if not api_key:
+        raise RuntimeError(
+            "Kite is not configured for this account. Add API key + secret in /account."
+        )
+    from kiteconnect import KiteConnect
+    return KiteConnect(api_key=api_key).login_url()
+
+
+def exchange_request_token(db: Session, user: User, request_token: str) -> dict[str, Any]:
+    """Swap a ``request_token`` for an ``access_token`` and persist it on the
+    user. Returns Kite's ``generate_session`` response so the caller can show
+    the user's Kite name/id if it wants."""
+    api_key = _api_key(user)
+    api_secret = _api_secret(user)
+    if not (api_key and api_secret):
+        raise RuntimeError(
+            "Kite credentials missing — add them in /account before logging in."
+        )
     from kiteconnect import KiteConnect
 
-    kc = KiteConnect(api_key=config.KITE_API_KEY)
-    return kc.login_url()
-
-
-def exchange_request_token(db: Session, request_token: str) -> dict[str, Any]:
-    """Swap a ``request_token`` from the callback for an ``access_token`` and persist."""
-    if not (config.KITE_API_KEY and config.KITE_API_SECRET):
-        raise RuntimeError("KITE_API_KEY / KITE_API_SECRET not configured")
-    from kiteconnect import KiteConnect
-
-    kc = KiteConnect(api_key=config.KITE_API_KEY)
-    data = kc.generate_session(request_token, api_secret=config.KITE_API_SECRET)
-    access_token = data["access_token"]
-    app_settings.set_value(db, _TOKEN_KEY, access_token)
-    app_settings.set_value(db, _TOKEN_DATE_KEY, _today_ist().isoformat())
-    if data.get("user_id"):
-        app_settings.set_value(db, _USER_ID_KEY, str(data["user_id"]))
-    if data.get("user_name"):
-        app_settings.set_value(db, _USER_NAME_KEY, str(data["user_name"]))
+    kc = KiteConnect(api_key=api_key)
+    data = kc.generate_session(request_token, api_secret=api_secret)
+    user.kite_access_token_enc = auth_mod.encrypt_str(data["access_token"])
+    # Treat the token as valid until 06:00 IST tomorrow — Kite's rotation cadence.
+    tomorrow_6am_ist = datetime.now(tz=IST).replace(
+        hour=6, minute=0, second=0, microsecond=0
+    ) + timedelta(days=1)
+    # Store as naive UTC for SQLAlchemy DateTime column consistency.
+    user.kite_token_expires_at = tomorrow_6am_ist.astimezone(timezone.utc).replace(tzinfo=None)
     db.commit()
     return data
 
 
-def logout(db: Session) -> None:
-    for k in (_TOKEN_KEY, _TOKEN_DATE_KEY, _USER_ID_KEY, _USER_NAME_KEY):
-        app_settings.set_value(db, k, "")
+def logout(db: Session, user: User) -> None:
+    user.kite_access_token_enc = None
+    user.kite_token_expires_at = None
     db.commit()
 
 
-def client(db: Session):
+def save_credentials(
+    db: Session, user: User, api_key: str | None, api_secret: str | None,
+) -> None:
+    """Encrypt and store the user's Kite developer-app credentials. Empty
+    strings clear them (so the user can revoke)."""
+    if api_key:
+        user.kite_api_key_enc = auth_mod.encrypt_str(api_key.strip())
+    elif api_key == "":
+        user.kite_api_key_enc = None
+    if api_secret:
+        user.kite_api_secret_enc = auth_mod.encrypt_str(api_secret.strip())
+    elif api_secret == "":
+        user.kite_api_secret_enc = None
+    # Re-saving credentials invalidates any access_token (creds may have changed).
+    user.kite_access_token_enc = None
+    user.kite_token_expires_at = None
+    db.commit()
+
+
+# -- Authenticated client ---------------------------------------------------
+
+
+def client(user: User):
     """Return an authenticated KiteConnect client, or None if not authed."""
-    if not is_authed(db):
+    if not is_authed(user):
+        return None
+    api_key = _api_key(user)
+    token = _access_token(user)
+    if not (api_key and token):
         return None
     from kiteconnect import KiteConnect
-
-    kc = KiteConnect(api_key=config.KITE_API_KEY)
-    kc.set_access_token(app_settings.get(db, _TOKEN_KEY))
+    kc = KiteConnect(api_key=api_key)
+    kc.set_access_token(token)
     return kc
 
 
-# -- LTP ---------------------------------------------------------------------
+# -- LTP --------------------------------------------------------------------
 
 
-def ltp(db: Session, symbols: list[str]) -> dict[str, float]:
-    """Fetch last traded prices for a list of journal symbols.
+def ltp(db: Session, user: User, symbols: list[str]) -> dict[str, float]:
+    """Fetch last traded prices for the given journal symbols using ``user``'s
+    Kite session. Empty dict if not authed or symbols can't be resolved."""
+    from .models import KiteInstrument  # noqa: F401  -- import for type narrowing
 
-    Looks up each symbol in the cached instrument master to resolve the right
-    ``EXCHANGE:TRADINGSYMBOL`` pair (handles NSE/BSE/NSE-SME/BSE-SME uniformly)
-    and issues a single batched ``kite.ltp()`` call.
-
-    Returns a dict mapping journal-symbol → price. Missing symbols are omitted.
-    """
-    from .models import KiteInstrument  # local import to avoid cycles
-
-    kc = client(db)
+    kc = client(user)
     if kc is None or not symbols:
         return {}
 
     out: dict[str, float] = {}
-    kite_keys: dict[str, str] = {}  # journal_symbol -> "EXCH:TRADINGSYMBOL"
-
+    kite_keys: dict[str, str] = {}
     for sym in symbols:
         inst = _resolve_instrument(db, sym)
         if inst is None:
@@ -131,7 +197,6 @@ def ltp(db: Session, symbols: list[str]) -> dict[str, float]:
 
     if not kite_keys:
         return out
-
     try:
         resp = kc.ltp(list(kite_keys.values()))
     except Exception as e:  # noqa: BLE001
@@ -151,13 +216,6 @@ def ltp(db: Session, symbols: list[str]) -> dict[str, float]:
 
 
 def _clean_symbol(symbol: str) -> str:
-    """Drop broker-export artefacts that aren't part of the actual ticker.
-
-    Strips trailing ``.0`` (BSE numeric scrip codes parsed as floats) and
-    series suffixes like ``-EQ`` / ``-BE`` / ``-BZ`` that Zerodha appends.
-    Does NOT strip ``-SM`` because that IS part of the tradingsymbol for NSE
-    SME listings (e.g. ``SKP-SM``).
-    """
     s = (symbol or "").strip().upper()
     if "." in s:
         base, _, tail = s.rpartition(".")
@@ -171,9 +229,6 @@ def _clean_symbol(symbol: str) -> str:
 
 
 def _symbol_candidates(symbol: str) -> list[str]:
-    """Resolution order: literal, cleaned, then the literal with ``-SM``
-    appended so journal entries like ``ALPEXSOLAR`` still hit their NSE SME
-    row ``ALPEXSOLAR-SM``."""
     literal = (symbol or "").strip().upper()
     out: list[str] = [literal]
     cleaned = _clean_symbol(literal)
@@ -185,20 +240,13 @@ def _symbol_candidates(symbol: str) -> list[str]:
 
 
 def _resolve_instrument(db: Session, symbol: str):
-    """Best-effort lookup in KiteInstrument for a journal symbol.
-
-    Tries the literal symbol first (so ``SKP-SM`` hits its NSE SME row), then
-    a cleaned variant for Zerodha series-suffixed symbols, then ``{sym}-SM``
-    for journal entries that dropped the SME suffix. Preference within each
-    candidate: NSE → BSE → any exchange.
-
-    Numeric journal symbols are treated as BSE scrip codes and matched on
-    ``exchange_token`` (which is where BSE scrip codes live).
-    """
+    """Best-effort lookup in the SHARED ``kite_instruments`` table. NSE → BSE
+    preference. Numeric symbols match BSE scrip codes by ``exchange_token``."""
     from .models import KiteInstrument
 
+    # KiteInstrument is shared (no user_id) — but the auto-filter only acts on
+    # models that have user_id, so a vanilla query is fine.
     candidates = _symbol_candidates(symbol)
-
     for candidate in candidates:
         q = db.query(KiteInstrument).filter(KiteInstrument.tradingsymbol == candidate)
         for exch in ("NSE", "BSE"):
@@ -209,7 +257,6 @@ def _resolve_instrument(db: Session, symbol: str):
         if row:
             return row
 
-    # Numeric fall-through: match BSE scrip code on exchange_token.
     literal = (symbol or "").strip().upper()
     if literal.isdigit():
         return (
@@ -223,14 +270,20 @@ def _resolve_instrument(db: Session, symbol: str):
     return None
 
 
-# -- Instrument master -------------------------------------------------------
+# -- Instrument master ------------------------------------------------------
 
 
-def sync_instruments(db: Session, exchanges: tuple[str, ...] = ("NSE", "BSE")) -> dict:
-    """Pull the full instrument dump for the given exchanges, replace the cache."""
+def sync_instruments(
+    db: Session, user: User, exchanges: tuple[str, ...] = ("NSE", "BSE"),
+) -> dict:
+    """Pull the full instrument dump for the given exchanges, replace the cache.
+
+    Uses ``user``'s Kite session, but writes to the SHARED
+    ``kite_instruments`` table — every user benefits from one user's sync.
+    """
     from .models import KiteInstrument
 
-    kc = client(db)
+    kc = client(user)
     if kc is None:
         raise RuntimeError("Not authenticated with Kite")
 
@@ -243,9 +296,6 @@ def sync_instruments(db: Session, exchanges: tuple[str, ...] = ("NSE", "BSE")) -
     for exch in exchanges:
         rows = kc.instruments(exch)
         for r in rows:
-            # Focus on equity rows; skip derivatives by default.
-            if r.get("segment") not in (f"{exch}", "BSE", "NSE"):
-                pass  # Kite returns the segment; we keep all equity rows
             db.add(
                 KiteInstrument(
                     instrument_token=int(r["instrument_token"]),
@@ -262,7 +312,5 @@ def sync_instruments(db: Session, exchanges: tuple[str, ...] = ("NSE", "BSE")) -
             total += 1
         db.flush()
 
-    db.commit()
-    app_settings.set_value(db, "kite_instruments_synced_at", datetime.utcnow().isoformat())
     db.commit()
     return {"total": total, "exchanges": list(exchanges)}

@@ -501,20 +501,20 @@ def _apply_leg(
 # -- Public entry points ---------------------------------------------------
 
 
-def fetch_today_via_kite(db: Session) -> ReconResult:
+def fetch_today_via_kite(db: Session, user) -> ReconResult:
     """Pull today's executions from Kite's trades() API → same append pipeline.
 
     Kite's ``trades()`` returns every execution (fill) for the current trading
     day. We map each row to our ``Execution`` dataclass and hand it to
     ``apply_executions_append`` — same dedup ledger (Trade ID), same FIFO
     reconstruction as the xlsx upload path. Token-expiry is caller's problem:
-    if not authed, raise so the UI can redirect to /auth/zerodha/login.
+    if not authed, raise so the UI can redirect to the Kite login flow.
     """
     from . import kite as kite_svc
 
-    kc = kite_svc.client(db)
+    kc = kite_svc.client(user)
     if kc is None:
-        raise RuntimeError("Not authenticated with Kite — log in at /settings")
+        raise RuntimeError("Not authenticated with Kite — log in via /account")
 
     try:
         rows = kc.trades() or []

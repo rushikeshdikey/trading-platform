@@ -1,11 +1,14 @@
-"""Zerodha Kite Connect login flow.
+"""Zerodha Kite Connect login flow — per user.
 
-Three endpoints:
-- GET  /auth/zerodha/login     → 303 redirect to Kite login
-- GET  /auth/zerodha/callback  → Kite redirects here with `request_token`; we
-                                 exchange it, store the access token, and
-                                 redirect to /settings.
-- POST /auth/zerodha/logout    → clear the stored token.
+Each user supplies their own Kite developer-app credentials (api_key +
+secret) in /account before logging in. The endpoints here assume those are
+already set; if not, they redirect the user to /account with an error.
+
+Endpoints:
+- GET  /auth/zerodha/login     → 303 to Kite login page
+- GET  /auth/zerodha/callback  → exchange request_token, persist on User
+- POST /auth/zerodha/logout    → clear the user's stored access_token
+- POST /auth/zerodha/sync-instruments → refresh shared instrument-master cache
 """
 from __future__ import annotations
 
@@ -13,67 +16,74 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
-from .. import config, kite
+from .. import auth as user_auth
+from .. import kite
 from ..db import get_db
+from ..models import User
 
 router = APIRouter(prefix="/auth/zerodha")
 
 
 @router.get("/login")
-def login(request: Request):
-    if not config.kite_configured():
-        return HTMLResponse(
-            "<h1>Kite is not configured</h1>"
-            "<p>Set KITE_API_KEY and KITE_API_SECRET in the .env file "
-            "at the project root, then restart the app.</p>",
-            status_code=500,
+def login(request: Request, user: User = Depends(user_auth.require_user)):
+    if not kite.is_configured(user):
+        return RedirectResponse(
+            url="/account?kite_error=not_configured", status_code=303,
         )
-    return RedirectResponse(url=kite.login_url(), status_code=303)
+    return RedirectResponse(url=kite.login_url(user), status_code=303)
 
 
 @router.get("/callback")
-def callback(request: Request, db: Session = Depends(get_db)):
+def callback(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(user_auth.require_user),
+):
     request_token = request.query_params.get("request_token")
     status_param = request.query_params.get("status")
     if status_param == "error" or not request_token:
         msg = request.query_params.get("message", "Kite login was cancelled or failed.")
-        return RedirectResponse(
-            url=f"/settings?kite_error={msg}", status_code=303
-        )
+        return RedirectResponse(url=f"/account?kite_error={msg}", status_code=303)
     try:
-        data = kite.exchange_request_token(db, request_token)
-    except Exception as exc:  # noqa: BLE001 — surface the error to the user
+        data = kite.exchange_request_token(db, user, request_token)
+    except Exception as exc:  # noqa: BLE001
         return RedirectResponse(
-            url=f"/settings?kite_error={type(exc).__name__}: {exc}", status_code=303
+            url=f"/account?kite_error={type(exc).__name__}: {exc}",
+            status_code=303,
         )
-    # Kick off an instrument-master sync in the same request — it's ~10k rows,
-    # takes a couple of seconds, and every other feature depends on it.
+    # Kick off the shared instrument-master sync (~10k rows, takes seconds).
     try:
-        kite.sync_instruments(db)
+        kite.sync_instruments(db, user)
         synced = "1"
     except Exception as exc:  # noqa: BLE001
         synced = f"0&kite_sync_error={type(exc).__name__}: {exc}"
     return RedirectResponse(
-        url=f"/settings?kite_connected=1&user={data.get('user_id','')}&synced={synced}",
+        url=f"/account?kite_connected=1&user={data.get('user_id','')}&synced={synced}",
         status_code=303,
     )
 
 
 @router.post("/logout")
-def logout(db: Session = Depends(get_db)):
-    kite.logout(db)
-    return RedirectResponse(url="/settings", status_code=303)
+def logout(
+    db: Session = Depends(get_db),
+    user: User = Depends(user_auth.require_user),
+):
+    kite.logout(db, user)
+    return RedirectResponse(url="/account", status_code=303)
 
 
 @router.post("/sync-instruments")
-def sync_instruments(db: Session = Depends(get_db)):
+def sync_instruments(
+    db: Session = Depends(get_db),
+    user: User = Depends(user_auth.require_user),
+):
     try:
-        result = kite.sync_instruments(db)
+        result = kite.sync_instruments(db, user)
         return RedirectResponse(
-            url=f"/settings?kite_synced={result['total']}", status_code=303
+            url=f"/account?kite_synced={result['total']}", status_code=303,
         )
     except Exception as exc:  # noqa: BLE001
         return RedirectResponse(
-            url=f"/settings?kite_sync_error={type(exc).__name__}: {exc}",
+            url=f"/account?kite_sync_error={type(exc).__name__}: {exc}",
             status_code=303,
         )

@@ -86,14 +86,100 @@
     </div>
   </div>
 
-  <!-- Kite section (M3 will populate this) -->
+  <!-- Kite credentials section -->
   <div class="card">
     <div class="card-header">
-      <div class="card-title">Zerodha Kite credentials</div>
-      <div class="card-description">Each user supplies their own Kite developer-app keys.</div>
+      <div class="card-title flex items-center gap-2">
+        <i data-lucide="key-square" class="w-4 h-4"></i>Zerodha Kite credentials
+      </div>
+      <div class="card-description">
+        Your own Kite developer-app keys. Stored encrypted (Fernet) — only your session can decrypt.
+        Get them from <a href="https://developers.kite.trade/apps" target="_blank" rel="noopener" class="underline">developers.kite.trade/apps</a>.
+      </div>
     </div>
-    <div class="p-6 text-sm text-zinc-500">
-      Per-user Kite credential management coming in the next update. For now, configure Kite in <a href="/settings" class="underline text-zinc-900 font-medium">Settings</a>.
+
+    {% if kite_creds_saved %}
+    <div class="mx-6 mt-4 p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm">
+      Credentials saved. Click <strong>Login to Kite</strong> below to authorize.
+    </div>
+    {% endif %}
+    {% if kite_connected %}
+    <div class="mx-6 mt-4 p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm">
+      Kite connected{% if kite_synced %} · instruments synced ({{ kite_synced }} symbols){% endif %}.
+    </div>
+    {% endif %}
+    {% if kite_error %}
+    <div class="mx-6 mt-4 p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-sm">
+      Kite error: {{ kite_error }}
+    </div>
+    {% endif %}
+
+    <!-- Status row -->
+    <div class="px-6 pt-5 pb-3 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+      <div class="flex items-center gap-2">
+        <span class="text-zinc-500">Configured</span>
+        {% if kite.configured %}
+          <span class="pill bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px]">Yes</span>
+        {% else %}
+          <span class="pill bg-zinc-100 text-zinc-500 border-zinc-200 text-[10px]">No keys yet</span>
+        {% endif %}
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="text-zinc-500">Session</span>
+        {% if kite.authed %}
+          <span class="pill bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px]">Authed</span>
+          <span class="text-xs text-zinc-500">expires {{ kite.token_expires_at[:16] if kite.token_expires_at else '—' }}</span>
+        {% else %}
+          <span class="pill bg-zinc-100 text-zinc-500 border-zinc-200 text-[10px]">Not logged in</span>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Credential form -->
+    <form method="post" action="/account/kite-credentials" class="px-6 pb-4 grid md:grid-cols-2 gap-4">
+      <div>
+        <label class="block text-xs font-semibold uppercase tracking-wide text-zinc-500 mb-1">API key</label>
+        <input type="text" name="api_key"
+               placeholder="{% if kite.configured %}•••••• (saved){% else %}paste from kite developer console{% endif %}"
+               class="w-full px-3 py-2 border border-zinc-200 rounded font-mono text-sm focus:outline-none focus:ring-2 focus:ring-zinc-900">
+      </div>
+      <div>
+        <label class="block text-xs font-semibold uppercase tracking-wide text-zinc-500 mb-1">API secret</label>
+        <input type="password" name="api_secret"
+               placeholder="{% if kite.configured %}•••••• (saved){% else %}paste secret{% endif %}"
+               class="w-full px-3 py-2 border border-zinc-200 rounded font-mono text-sm focus:outline-none focus:ring-2 focus:ring-zinc-900">
+      </div>
+      <div class="md:col-span-2 text-xs text-zinc-500">
+        Leave fields blank to keep existing values. Saving new credentials clears any active session — re-login to Kite afterwards.
+      </div>
+      <div class="md:col-span-2">
+        <button type="submit" class="btn btn-primary">
+          <i data-lucide="save"></i>Save credentials
+        </button>
+      </div>
+    </form>
+
+    <!-- Login / logout actions -->
+    <div class="px-6 pb-6 pt-2 flex flex-wrap items-center gap-3 border-t border-zinc-100">
+      {% if kite.authed %}
+        <form method="post" action="/auth/zerodha/sync-instruments" class="inline">
+          <button class="btn btn-outline">
+            <i data-lucide="refresh-cw"></i>Re-sync instrument master
+          </button>
+        </form>
+        <form method="post" action="/auth/zerodha/logout" class="inline">
+          <button class="btn btn-ghost text-rose-700 hover:bg-rose-50">
+            <i data-lucide="log-out"></i>Logout from Kite
+          </button>
+        </form>
+      {% elif kite.configured %}
+        <a href="/auth/zerodha/login" class="btn btn-primary">
+          <i data-lucide="log-in"></i>Login to Kite
+        </a>
+        <span class="text-xs text-zinc-500">You'll be redirected to Kite, then back here.</span>
+      {% else %}
+        <span class="text-xs text-zinc-500">Save your API key and secret first, then you can log in to Kite.</span>
+      {% endif %}
     </div>
   </div>
 

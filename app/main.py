@@ -109,21 +109,21 @@ app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 prices.start_background_refresher()
 
 
-@app.get("/api/status", dependencies=[Depends(require_user)])
-def api_status():
+@app.get("/api/status")
+def api_status(user=Depends(require_user)):
     """Lightweight status summary consumed by the global nav strip."""
     from . import dashboard as _dash, kite as _kite
 
     with SessionLocal() as db:
         capital = _dash.current_capital(db)
-        kite_status = _kite.auth_status(db)
+        kite_status = _kite.auth_status(user)
         last = prices.last_refresh_at(db)
         from .models import Trade
         open_count = db.query(Trade).filter(Trade.status == "open").count()
     return {
         "capital": round(capital, 2),
         "kite_authed": kite_status["authed"],
-        "kite_user": kite_status.get("user_name") or kite_status.get("user_id"),
+        "kite_configured": kite_status["configured"],
         "open_positions": open_count,
         "prices_last_refresh": last.isoformat() if last else None,
     }
