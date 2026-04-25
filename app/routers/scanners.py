@@ -226,14 +226,18 @@ def refresh_index_universe(request: Request):
 
 @router.post("/refresh-bars", response_class=HTMLResponse)
 def refresh_bars(request: Request, db: Session = Depends(get_db)):
-    """Synchronous bhavcopy refresh. First run pulls 180 calendar days."""
-    summary = scanner_runner.refresh_bars_cache(db, lookback_days=180)
-    msg = (
-        f"downloaded={summary.days_downloaded} "
-        f"skipped_existing={summary.days_skipped_existing} "
-        f"failed={summary.days_failed} "
-        f"rows_added={summary.rows_upserted}"
-    )
+    """Kick off a bhavcopy refresh in a daemon thread and return immediately.
+
+    The refresh hits NSE + BSE archives day-by-day for up to 180 days — a
+    cold start can take 5-15 minutes and routinely exceeds gunicorn's
+    request timeout. Pinning the worker = the whole site goes down. So we
+    background-thread it and let progress show up via the cache stats on
+    page reload (Bars count + latest_date will tick up).
+    """
+    from ..scanner import bars_cache as bc
+
+    started = bc.start_background_refresh(lookback_days=180)
+    msg = "started" if started else "already_running"
     return RedirectResponse(url=f"/scanners?refresh={msg}", status_code=303)
 
 

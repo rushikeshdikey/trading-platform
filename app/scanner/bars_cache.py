@@ -14,7 +14,7 @@ import csv
 import io
 import logging
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Iterable
 
 import requests
@@ -375,3 +375,80 @@ def bars_by_symbol(db: Session, symbols: Iterable[str], lookback_days: int = 180
 def latest_bar_date(db: Session) -> date | None:
     row = db.query(func.max(DailyBar.date)).scalar()
     return row
+
+
+# ---------------------------------------------------------------------------
+# Background refresh — moves the multi-minute bhavcopy pull off the request
+# path so it can't pin a gunicorn worker (the same pattern we use for the
+# NSE index-universe refresh).
+# ---------------------------------------------------------------------------
+
+import threading  # noqa: E402
+
+_refresh_lock = threading.Lock()
+_refresh_thread: threading.Thread | None = None
+_refresh_state: dict = {
+    "running": False,
+    "started_at": None,
+    "finished_at": None,
+    "last_summary": None,
+    "last_error": None,
+}
+
+
+def _refresh_worker(lookback_days: int) -> None:
+    """Worker entrypoint. Owns its own DB session — the request thread that
+    spawned us has long since returned."""
+    from ..db import SessionLocal
+
+    global _refresh_state
+    with SessionLocal() as db:
+        try:
+            summary = refresh_bars(db, lookback_days=lookback_days)
+            _refresh_state = {
+                "running": False,
+                "started_at": _refresh_state.get("started_at"),
+                "finished_at": datetime.utcnow().isoformat(),
+                "last_summary": {
+                    "days_downloaded": summary.days_downloaded,
+                    "days_skipped_existing": summary.days_skipped_existing,
+                    "days_failed": summary.days_failed,
+                    "rows_upserted": summary.rows_upserted,
+                },
+                "last_error": None,
+            }
+        except Exception as exc:  # noqa: BLE001
+            log.exception("background bars refresh failed")
+            _refresh_state = {
+                "running": False,
+                "started_at": _refresh_state.get("started_at"),
+                "finished_at": datetime.utcnow().isoformat(),
+                "last_summary": None,
+                "last_error": f"{type(exc).__name__}: {exc}",
+            }
+
+
+def start_background_refresh(lookback_days: int = 180) -> bool:
+    """Kick off a daemon thread to pull bhavcopies. Returns True if a new
+    refresh started, False if one was already in flight (idempotent — safe
+    to spam-click the button)."""
+    global _refresh_thread, _refresh_state
+    with _refresh_lock:
+        if _refresh_thread is not None and _refresh_thread.is_alive():
+            return False
+        _refresh_state = {
+            "running": True,
+            "started_at": datetime.utcnow().isoformat(),
+            "finished_at": None,
+            "last_summary": None,
+            "last_error": None,
+        }
+        _refresh_thread = threading.Thread(
+            target=_refresh_worker, args=(lookback_days,), daemon=True,
+        )
+        _refresh_thread.start()
+    return True
+
+
+def refresh_status() -> dict:
+    return dict(_refresh_state)
