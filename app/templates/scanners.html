@@ -64,8 +64,12 @@
 
   {# ====================== UNIFIED RESULTS (cached) ===================== #}
   {% if unified %}
+  {% set _row_meta = [] %}
+  {% for row in unified.rows %}{% set _ = _row_meta.append({"symbol": row.symbol, "tier": row.tier, "close": row.primary.close, "watching": row.on_watchlist, "setups": row.scans|map(attribute="type")|list}) %}{% endfor %}
+
   <div class="card"
-       x-data='scannerSelect({{ unified.rows|map(attribute="symbol")|list|tojson }}, "Multi-scan")'>
+       x-data='unifiedScanner({{ _row_meta|tojson }}, "Multi-scan")'
+       x-init="restore()">
     <div class="card-header flex items-center justify-between flex-wrap gap-3">
       <div>
         <div class="card-title flex items-center gap-2">
@@ -152,80 +156,182 @@
       {% endfor %}
     </div>
 
-    <div class="overflow-x-auto">
-      <table class="jrnl">
-        <thead>
-          <tr>
-            <th class="!w-8">
-              <input type="checkbox" @change="toggleAll($event.target.checked)" :checked="allSelected()" class="rounded border-zinc-300">
-            </th>
-            <th>Tier</th>
-            <th>Symbol</th>
-            <th>Setups</th>
-            <th>Score</th>
-            <th>Close</th>
-            <th>Entry</th>
-            <th>SL</th>
-            <th>Qty 0.25 / 0.5</th>
-            <th>Risk ₹</th>
-            <th class="text-right">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for row in unified.rows %}
-          {% set c = row.primary %}
-          {% set s = row.sizing %}
-          <tr :class="selected.has('{{ c.symbol }}') ? 'bg-emerald-50/40' : ''">
-            <td><input type="checkbox" :checked="selected.has('{{ c.symbol }}')" @change="toggle('{{ c.symbol }}')" class="rounded border-zinc-300"></td>
-            <td>
-              <span class="pill text-xs font-bold border
-                {% if row.tier == 'A+' %}bg-emerald-100 text-emerald-800 border-emerald-300
-                {% elif row.tier == 'A' %}bg-emerald-50 text-emerald-700 border-emerald-200
-                {% else %}bg-zinc-100 text-zinc-700 border-zinc-200{% endif %}">{{ row.tier }}</span>
-            </td>
-            <td class="font-semibold">{{ c.symbol }}</td>
-            <td>
-              <div class="flex flex-wrap gap-1">
-                {% for sc in row.scans %}
-                  <span class="pill text-[10px] bg-sky-50 text-sky-700 border-sky-200 font-medium" title="Score {{ '{:.1f}'.format(sc.score) }}">
-                    {{ sc.label }}
-                  </span>
-                {% endfor %}
-              </div>
-            </td>
-            <td class="tabular-nums font-semibold">{{ '{:.0f}'.format(c.score) }}</td>
-            <td class="tabular-nums">₹{{ '{:,.2f}'.format(c.close) }}</td>
-            <td class="tabular-nums font-semibold">₹{{ '{:,.2f}'.format(c.suggested_entry) }}</td>
-            <td class="tabular-nums text-rose-700">₹{{ '{:,.2f}'.format(c.suggested_sl) }}</td>
-            <td class="tabular-nums"><span class="text-zinc-500">{{ s.qty_low }}</span> / <span class="font-semibold">{{ s.qty_high }}</span></td>
-            <td class="tabular-nums text-xs"><span class="text-zinc-500">₹{{ '{:,.0f}'.format(s.risk_rs_low) }}</span> / <span class="font-semibold">₹{{ '{:,.0f}'.format(s.risk_rs_high) }}</span></td>
-            <td class="text-right whitespace-nowrap">
-              <a class="btn btn-outline !py-1 !px-2 text-xs" href="https://www.tradingview.com/chart/?symbol=NSE:{{ c.symbol }}" target="_blank" rel="noopener" title="Open chart on TradingView">
-                <i data-lucide="line-chart"></i>
-              </a>
-              <a class="btn btn-outline !py-1 !px-2 text-xs"
-                 href="/trades/new?instrument={{ c.symbol }}&entry_price={{ c.suggested_entry }}&sl={{ c.suggested_sl }}&qty={{ s.qty_high }}&setup={{ row.scans[0].label|urlencode }}"
-                 title="Plan a trade prefilled at 0.5% risk">
-                <i data-lucide="file-plus"></i>Plan
-              </a>
-              {% if row.on_watchlist %}
-                <span class="pill bg-zinc-100 text-zinc-500 border-zinc-200 text-[10px]">Watching</span>
-              {% else %}
-                <form method="post" action="/watchlist/add" class="inline">
-                  <input type="hidden" name="symbol" value="{{ c.symbol }}">
-                  <input type="hidden" name="setup_label" value="{{ row.scans[0].label }}">
-                  <input type="hidden" name="alert_price" value="{{ c.suggested_entry }}">
-                  <input type="hidden" name="suggested_sl" value="{{ c.suggested_sl }}">
-                  <input type="hidden" name="notes" value="Tier {{ row.tier }} · {{ row.scan_count }} scan(s) · score {{ '{:.0f}'.format(c.score) }}">
-                  <input type="hidden" name="return_to" value="/scanners">
-                  <button class="btn btn-ghost !py-1 !px-2 text-xs" title="Save to watchlist"><i data-lucide="bookmark"></i></button>
-                </form>
-              {% endif %}
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+    <!-- Filter sidebar + table -->
+    <div class="grid lg:grid-cols-[220px_1fr] gap-0">
+
+      <!-- Sidebar -->
+      <aside class="border-r border-zinc-100 p-4 space-y-5 lg:sticky lg:top-[120px] lg:self-start">
+        <div>
+          <div class="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-2">Setup</div>
+          <div class="space-y-1.5">
+            {% for st_key, summary in unified.scan_summary.items() %}
+            <label class="flex items-center gap-2 text-xs cursor-pointer">
+              <input type="checkbox" class="rounded border-zinc-300"
+                     :checked="setupFilter[ '{{ st_key }}' ]"
+                     @change="setupFilter[ '{{ st_key }}' ] = $event.target.checked; persist()">
+              <span class="flex-1">{{ summary.label }}</span>
+              <span class="text-zinc-400 tabular-nums">{{ summary.count }}</span>
+            </label>
+            {% endfor %}
+          </div>
+        </div>
+
+        <div>
+          <div class="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-2">Conviction</div>
+          <div class="space-y-1.5">
+            {% for tier in ['A+', 'A', 'B'] %}
+            <label class="flex items-center gap-2 text-xs cursor-pointer">
+              <input type="checkbox" class="rounded border-zinc-300"
+                     :checked="tierFilter[ '{{ tier }}' ]"
+                     @change="tierFilter[ '{{ tier }}' ] = $event.target.checked; persist()">
+              <span>Tier {{ tier }}</span>
+            </label>
+            {% endfor %}
+          </div>
+        </div>
+
+        <div>
+          <div class="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-2">Price ₹</div>
+          <div class="grid grid-cols-2 gap-1.5">
+            <input type="number" placeholder="min" min="0"
+                   class="px-2 py-1 text-xs border border-zinc-200 rounded tabular-nums"
+                   x-model.number.lazy="priceMin" @change="persist()">
+            <input type="number" placeholder="max" min="0"
+                   class="px-2 py-1 text-xs border border-zinc-200 rounded tabular-nums"
+                   x-model.number.lazy="priceMax" @change="persist()">
+          </div>
+        </div>
+
+        <div>
+          <div class="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-2">Other</div>
+          <label class="flex items-center gap-2 text-xs cursor-pointer">
+            <input type="checkbox" class="rounded border-zinc-300"
+                   x-model="onlyWatchlist" @change="persist()">
+            <span>Already watching</span>
+          </label>
+          <label class="flex items-center gap-2 text-xs cursor-pointer mt-1.5">
+            <input type="checkbox" class="rounded border-zinc-300"
+                   x-model="hideWatchlist" @change="persist()">
+            <span>Hide watching</span>
+          </label>
+        </div>
+
+        <div class="text-[11px] text-zinc-500 pt-2 border-t border-zinc-100">
+          Showing <span class="font-semibold text-zinc-900 tabular-nums" x-text="visibleCount"></span> / {{ unified.rows|length }}
+          <button type="button" class="block mt-1 text-zinc-700 underline" @click="resetFilters()">Reset</button>
+        </div>
+
+        <div class="text-[10px] text-zinc-400 leading-relaxed pt-2 border-t border-zinc-100">
+          <kbd class="px-1 py-0.5 bg-zinc-100 rounded">J</kbd>/<kbd class="px-1 py-0.5 bg-zinc-100 rounded">K</kbd> nav ·
+          <kbd class="px-1 py-0.5 bg-zinc-100 rounded">Space</kbd> select ·
+          <kbd class="px-1 py-0.5 bg-zinc-100 rounded">X</kbd> watch ·
+          <kbd class="px-1 py-0.5 bg-zinc-100 rounded">T</kbd> chart ·
+          <kbd class="px-1 py-0.5 bg-zinc-100 rounded">P</kbd> plan
+        </div>
+      </aside>
+
+      <!-- Table -->
+      <div class="overflow-x-auto" tabindex="0" @keydown.window="onKey($event)">
+        <table class="jrnl">
+          <thead>
+            <tr>
+              <th class="!w-8">
+                <input type="checkbox" @change="toggleAll($event.target.checked)" :checked="allSelected()" class="rounded border-zinc-300">
+              </th>
+              <th class="cursor-pointer select-none" @click="sortBy('tier')">
+                Tier <span x-show="sortKey === 'tier'" x-text="sortDir > 0 ? '▲' : '▼'" class="text-zinc-400"></span>
+              </th>
+              <th>Trend</th>
+              <th class="cursor-pointer select-none" @click="sortBy('symbol')">
+                Symbol <span x-show="sortKey === 'symbol'" x-text="sortDir > 0 ? '▲' : '▼'" class="text-zinc-400"></span>
+              </th>
+              <th>Setups</th>
+              <th class="cursor-pointer select-none" @click="sortBy('score')">
+                Score <span x-show="sortKey === 'score'" x-text="sortDir > 0 ? '▲' : '▼'" class="text-zinc-400"></span>
+              </th>
+              <th class="cursor-pointer select-none" @click="sortBy('close')">
+                Close <span x-show="sortKey === 'close'" x-text="sortDir > 0 ? '▲' : '▼'" class="text-zinc-400"></span>
+              </th>
+              <th>Entry</th>
+              <th>SL</th>
+              {% set lp = '{:.2f}'.format(unified.risk_low * 100) %}
+              {% set hp = '{:.2f}'.format(unified.risk_high * 100) %}
+              <th title="Conservative tier {{ lp }}% / Standard tier {{ hp }}%">Qty {{ lp }}% / {{ hp }}%</th>
+              <th title="₹ at risk at each tier">Risk ₹</th>
+              <th class="text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in unified.rows %}
+            {% set c = row.primary %}
+            {% set s = row.sizing %}
+            <tr x-show="rowVisible({{ loop.index0 }})"
+                :class="{
+                  'bg-emerald-50/40': selected.has('{{ c.symbol }}'),
+                  'ring-2 ring-zinc-900 ring-inset': cursor === {{ loop.index0 }},
+                }"
+                data-symbol="{{ c.symbol }}"
+                data-tier="{{ row.tier }}"
+                data-close="{{ c.close }}"
+                data-watching="{{ '1' if row.on_watchlist else '0' }}"
+                data-setups="{% for sc in row.scans %}{{ sc.type }}{% if not loop.last %},{% endif %}{% endfor %}">
+              <td><input type="checkbox" :checked="selected.has('{{ c.symbol }}')" @change="toggle('{{ c.symbol }}')" class="rounded border-zinc-300"></td>
+              <td>
+                <span class="pill text-xs font-bold border
+                  {% if row.tier == 'A+' %}bg-emerald-100 text-emerald-800 border-emerald-300
+                  {% elif row.tier == 'A' %}bg-emerald-50 text-emerald-700 border-emerald-200
+                  {% else %}bg-zinc-100 text-zinc-700 border-zinc-200{% endif %}">{{ row.tier }}</span>
+              </td>
+              <td class="!py-1">
+                {% if row.sparkline %}{{ row.sparkline|safe }}{% else %}<span class="text-zinc-300 text-xs">—</span>{% endif %}
+              </td>
+              <td class="font-semibold">{{ c.symbol }}</td>
+              <td>
+                <div class="flex flex-wrap gap-1">
+                  {% for sc in row.scans %}
+                    <span class="pill text-[10px] bg-sky-50 text-sky-700 border-sky-200 font-medium" title="Score {{ '{:.1f}'.format(sc.score) }}">
+                      {{ sc.label }}
+                    </span>
+                  {% endfor %}
+                </div>
+              </td>
+              <td class="tabular-nums font-semibold">{{ '{:.0f}'.format(c.score) }}</td>
+              <td class="tabular-nums">₹{{ '{:,.2f}'.format(c.close) }}</td>
+              <td class="tabular-nums font-semibold">₹{{ '{:,.2f}'.format(c.suggested_entry) }}</td>
+              <td class="tabular-nums text-rose-700">₹{{ '{:,.2f}'.format(c.suggested_sl) }}</td>
+              <td class="tabular-nums"><span class="text-zinc-500">{{ s.qty_low }}</span> / <span class="font-semibold">{{ s.qty_high }}</span></td>
+              <td class="tabular-nums text-xs"><span class="text-zinc-500">₹{{ '{:,.0f}'.format(s.risk_rs_low) }}</span> / <span class="font-semibold">₹{{ '{:,.0f}'.format(s.risk_rs_high) }}</span></td>
+              <td class="text-right whitespace-nowrap">
+                <a class="btn btn-outline !py-1 !px-2 text-xs"
+                   data-action="chart"
+                   href="https://www.tradingview.com/chart/?symbol=NSE:{{ c.symbol }}" target="_blank" rel="noopener" title="Open chart on TradingView (T)">
+                  <i data-lucide="line-chart"></i>
+                </a>
+                <a class="btn btn-outline !py-1 !px-2 text-xs"
+                   data-action="plan"
+                   href="/trades/new?instrument={{ c.symbol }}&entry_price={{ c.suggested_entry }}&sl={{ c.suggested_sl }}&qty={{ s.qty_high }}&setup={{ row.scans[0].label|urlencode }}"
+                   title="Plan trade (P)">
+                  <i data-lucide="file-plus"></i>Plan
+                </a>
+                {% if row.on_watchlist %}
+                  <span class="pill bg-zinc-100 text-zinc-500 border-zinc-200 text-[10px]">Watching</span>
+                {% else %}
+                  <form method="post" action="/watchlist/add" class="inline" data-action="watch">
+                    <input type="hidden" name="symbol" value="{{ c.symbol }}">
+                    <input type="hidden" name="setup_label" value="{{ row.scans[0].label }}">
+                    <input type="hidden" name="alert_price" value="{{ c.suggested_entry }}">
+                    <input type="hidden" name="suggested_sl" value="{{ c.suggested_sl }}">
+                    <input type="hidden" name="notes" value="Tier {{ row.tier }} · {{ row.scan_count }} scan(s) · score {{ '{:.0f}'.format(c.score) }}">
+                    <input type="hidden" name="return_to" value="/scanners">
+                    <button class="btn btn-ghost !py-1 !px-2 text-xs" title="Save to watchlist (X)"><i data-lucide="bookmark"></i></button>
+                  </form>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
     </div>
     {% endif %}
   </div>
@@ -568,6 +674,261 @@
         };
       }
     </script>
+  {% endif %}
+
+  {# Alpine component for the unified scanner table — extends scannerSelect
+     with filter sidebar, column sort, keyboard shortcuts, localStorage. #}
+  {% if unified %}
+  <script>
+    function unifiedScanner(rowMeta, setupLabel) {
+      const STORAGE_KEY = 'tj.unifiedScanner.v1';
+
+      // Default filter state — every scan + tier ON.
+      const setupKeys = Array.from(new Set(rowMeta.flatMap(r => r.setups)));
+      const defaultSetup = Object.fromEntries(setupKeys.map(k => [k, true]));
+      const defaultTier = { 'A+': true, 'A': true, 'B': true };
+
+      return {
+        // Row metadata, frozen at render-time.
+        rowMeta: rowMeta,
+        setupLabel: setupLabel,
+
+        // Selection (same as scannerSelect)
+        selected: new Set(),
+        exchange: 'NSE',
+        batchSize: 0,
+        batchIdx: 0,
+        toast: '',
+
+        // Filters
+        setupFilter: { ...defaultSetup },
+        tierFilter: { ...defaultTier },
+        priceMin: null,
+        priceMax: null,
+        onlyWatchlist: false,
+        hideWatchlist: false,
+
+        // Sort
+        sortKey: 'tier',
+        sortDir: 1,        // 1 desc (A+ first / largest first), -1 asc
+
+        // Keyboard cursor — index in rowMeta of the highlighted row, or -1.
+        cursor: -1,
+
+        // ---- lifecycle -----------------------------------------------------
+        restore() {
+          try {
+            const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+            if (saved.setupFilter) Object.assign(this.setupFilter, saved.setupFilter);
+            if (saved.tierFilter)  Object.assign(this.tierFilter, saved.tierFilter);
+            if ('priceMin' in saved)      this.priceMin = saved.priceMin;
+            if ('priceMax' in saved)      this.priceMax = saved.priceMax;
+            if ('onlyWatchlist' in saved) this.onlyWatchlist = saved.onlyWatchlist;
+            if ('hideWatchlist' in saved) this.hideWatchlist = saved.hideWatchlist;
+            if (saved.sortKey)            this.sortKey = saved.sortKey;
+            if (typeof saved.sortDir === 'number') this.sortDir = saved.sortDir;
+          } catch(e) {}
+          this.applySort();
+        },
+        persist() {
+          try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify({
+              setupFilter: this.setupFilter, tierFilter: this.tierFilter,
+              priceMin: this.priceMin, priceMax: this.priceMax,
+              onlyWatchlist: this.onlyWatchlist, hideWatchlist: this.hideWatchlist,
+              sortKey: this.sortKey, sortDir: this.sortDir,
+            }));
+          } catch(e) {}
+        },
+        resetFilters() {
+          this.setupFilter = { ...defaultSetup };
+          this.tierFilter = { ...defaultTier };
+          this.priceMin = null;
+          this.priceMax = null;
+          this.onlyWatchlist = false;
+          this.hideWatchlist = false;
+          this.persist();
+        },
+
+        // ---- visibility / sort --------------------------------------------
+        rowVisible(idx) {
+          const m = this.rowMeta[idx];
+          if (!m) return false;
+          // Setup gate — at least one of the row's setups must be enabled.
+          if (!m.setups.some(s => this.setupFilter[s])) return false;
+          if (!this.tierFilter[m.tier]) return false;
+          if (this.priceMin != null && m.close < this.priceMin) return false;
+          if (this.priceMax != null && m.close > this.priceMax) return false;
+          if (this.onlyWatchlist && !m.watching) return false;
+          if (this.hideWatchlist && m.watching) return false;
+          return true;
+        },
+        get visibleCount() {
+          let n = 0;
+          for (let i = 0; i < this.rowMeta.length; i++) if (this.rowVisible(i)) n++;
+          return n;
+        },
+        sortBy(key) {
+          if (this.sortKey === key) this.sortDir *= -1;
+          else { this.sortKey = key; this.sortDir = (key === 'symbol' ? -1 : 1); }
+          this.applySort();
+          this.persist();
+        },
+        applySort() {
+          // Sort the rendered <tr> nodes in place — no re-render needed.
+          const tbody = this.$root.querySelector('tbody');
+          if (!tbody) return;
+          const rows = Array.from(tbody.querySelectorAll('tr'));
+          const tierRank = { 'A+': 3, 'A': 2, 'B': 1 };
+          const key = this.sortKey, dir = this.sortDir;
+          const indexAttr = (tr) => Array.from(tr.parentNode.children).indexOf(tr);
+          rows.sort((a, b) => {
+            const ma = this.rowMeta[indexAttr(a)] || {};
+            const mb = this.rowMeta[indexAttr(b)] || {};
+            // Initial render order is metadata-index — we use cells for some keys.
+            const valA = key === 'tier' ? tierRank[ma.tier] || 0
+                       : key === 'symbol' ? ma.symbol
+                       : key === 'close' ? ma.close
+                       : key === 'score' ? parseFloat(a.querySelector('td:nth-child(6)')?.textContent || 0)
+                       : 0;
+            const valB = key === 'tier' ? tierRank[mb.tier] || 0
+                       : key === 'symbol' ? mb.symbol
+                       : key === 'close' ? mb.close
+                       : key === 'score' ? parseFloat(b.querySelector('td:nth-child(6)')?.textContent || 0)
+                       : 0;
+            if (valA < valB) return -1 * dir;
+            if (valA > valB) return  1 * dir;
+            return 0;
+          });
+          rows.forEach(r => tbody.appendChild(r));
+        },
+
+        // ---- selection (carryover from scannerSelect) ---------------------
+        toggle(sym) {
+          if (this.selected.has(sym)) this.selected.delete(sym);
+          else this.selected.add(sym);
+          this.selected = new Set(this.selected);
+          this.resetBatch();
+        },
+        toggleAll(check) {
+          // Only toggle currently-VISIBLE rows.
+          this.rowMeta.forEach((m, i) => {
+            if (!this.rowVisible(i)) return;
+            if (check) this.selected.add(m.symbol);
+            else this.selected.delete(m.symbol);
+          });
+          this.selected = new Set(this.selected);
+          this.resetBatch();
+        },
+        allSelected() {
+          let any = false;
+          for (let i = 0; i < this.rowMeta.length; i++) {
+            if (!this.rowVisible(i)) continue;
+            if (!this.selected.has(this.rowMeta[i].symbol)) return false;
+            any = true;
+          }
+          return any;
+        },
+        formatted() {
+          // Filter to selected AND currently visible.
+          const visible = new Set(
+            this.rowMeta.filter((_, i) => this.rowVisible(i)).map(m => m.symbol)
+          );
+          return Array.from(this.selected)
+            .filter(s => visible.has(s))
+            .map(s => this.exchange + ':' + s);
+        },
+        showToast(msg) {
+          this.toast = msg;
+          setTimeout(() => { this.toast = ''; }, 2200);
+        },
+        async copyAll() {
+          await navigator.clipboard.writeText(this.formatted().join(','));
+          this.showToast('Copied ' + this.formatted().length + ' symbols');
+        },
+        batchInfo(size) {
+          if (this.selected.size <= size) return '';
+          return Math.ceil(this.selected.size / size) + ' batches';
+        },
+        async copyBatch(size) {
+          this.batchSize = size;
+          this.batchIdx = 0;
+          await this.copyNextBatch();
+        },
+        async copyNextBatch() {
+          const all = this.formatted();
+          const start = this.batchIdx * this.batchSize;
+          const slice = all.slice(start, start + this.batchSize);
+          if (slice.length === 0) {
+            this.showToast('All batches copied');
+            this.resetBatch();
+            return;
+          }
+          await navigator.clipboard.writeText(slice.join(','));
+          this.batchIdx += 1;
+          const total = Math.ceil(all.length / this.batchSize);
+          this.showToast('Copied batch ' + this.batchIdx + ' / ' + total);
+        },
+        resetBatch() { this.batchSize = 0; this.batchIdx = 0; },
+
+        // ---- keyboard nav --------------------------------------------------
+        onKey(e) {
+          // Don't fire while typing in an input.
+          const t = e.target;
+          if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) {
+            // Allow / when not in an input — but if we're already in one, do nothing.
+            return;
+          }
+          const visibleIdx = [];
+          for (let i = 0; i < this.rowMeta.length; i++) if (this.rowVisible(i)) visibleIdx.push(i);
+          if (visibleIdx.length === 0) return;
+
+          const here = visibleIdx.indexOf(this.cursor);
+          const goto = (vi) => { this.cursor = visibleIdx[Math.max(0, Math.min(visibleIdx.length - 1, vi))]; this.scrollCursorIntoView(); };
+
+          switch (e.key) {
+            case 'j': case 'J': case 'ArrowDown':
+              if (here === -1) goto(0); else goto(here + 1);
+              e.preventDefault(); break;
+            case 'k': case 'K': case 'ArrowUp':
+              if (here === -1) goto(0); else goto(here - 1);
+              e.preventDefault(); break;
+            case ' ':
+              if (this.cursor >= 0) {
+                this.toggle(this.rowMeta[this.cursor].symbol);
+                e.preventDefault();
+              }
+              break;
+            case 'x': case 'X':
+              if (this.cursor >= 0) this._fireRowAction('watch');
+              break;
+            case 't': case 'T':
+              if (this.cursor >= 0) this._fireRowAction('chart');
+              break;
+            case 'p': case 'P':
+              if (this.cursor >= 0) this._fireRowAction('plan');
+              break;
+          }
+        },
+        _fireRowAction(action) {
+          const sym = this.rowMeta[this.cursor]?.symbol;
+          if (!sym) return;
+          const tr = this.$root.querySelector(`tr[data-symbol="${sym}"]`);
+          if (!tr) return;
+          const el = tr.querySelector(`[data-action="${action}"]`);
+          if (!el) return;
+          if (el.tagName === 'A') window.open(el.href, action === 'chart' ? '_blank' : '_self');
+          else if (el.tagName === 'FORM') el.submit();
+        },
+        scrollCursorIntoView() {
+          const sym = this.rowMeta[this.cursor]?.symbol;
+          if (!sym) return;
+          const tr = this.$root.querySelector(`tr[data-symbol="${sym}"]`);
+          if (tr) tr.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        },
+      };
+    }
+  </script>
   {% endif %}
 </div>
 {% endblock %}

@@ -39,11 +39,21 @@ def save(
     starting_capital: float = Form(...),
     starting_capital_date: str = Form(...),
     default_risk_pct: float = Form(...),
+    risk_pct_low: float = Form(...),
+    max_open_heat_pct: float = Form(...),
     default_allocation_pct: float = Form(...),
 ):
+    # Sanity bounds — silently clamp pathological inputs rather than 500.
+    default_risk_pct = max(0.0, min(0.05, default_risk_pct))
+    risk_pct_low = max(0.0, min(default_risk_pct, risk_pct_low))
+    max_open_heat_pct = max(0.0, min(0.50, max_open_heat_pct))
+    default_allocation_pct = max(0.0, min(1.0, default_allocation_pct))
+
     app_settings.set_value(db, "starting_capital", str(starting_capital))
     app_settings.set_value(db, "starting_capital_date", starting_capital_date)
     app_settings.set_value(db, "default_risk_pct", str(default_risk_pct))
+    app_settings.set_value(db, "risk_pct_low", str(risk_pct_low))
+    app_settings.set_value(db, "max_open_heat_pct", str(max_open_heat_pct))
     app_settings.set_value(db, "default_allocation_pct", str(default_allocation_pct))
     db.commit()
     return RedirectResponse(url="/settings", status_code=303)

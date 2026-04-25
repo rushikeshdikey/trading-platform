@@ -56,7 +56,7 @@
   </div>
 
   <div class="card p-6">
-    <h3 class="font-semibold mb-4">Capital &amp; defaults</h3>
+    <h3 class="font-semibold mb-4">Capital &amp; risk</h3>
     <form method="post" action="/settings/save" class="grid md:grid-cols-2 gap-4">
       <div>
         <label>Starting capital (₹)</label>
@@ -66,18 +66,46 @@
         <label>Starting date</label>
         <input type="date" name="starting_capital_date" value="{{ settings.starting_capital_date }}" required>
       </div>
+
+      <!-- Risk tiers ----------------------------------------------------- -->
       <div>
-        <label>Default risk on capital (decimal)</label>
-        <input type="number" step="0.001" name="default_risk_pct" value="{{ settings.default_risk_pct }}" required>
-        <p class="text-xs text-zinc-500 mt-1">e.g. 0.005 means 0.5% risk per trade</p>
+        <label>Standard risk per trade (decimal)</label>
+        <input type="number" step="0.0005" min="0" max="0.05"
+               name="default_risk_pct" value="{{ settings.default_risk_pct }}" required>
+        <p class="text-xs text-zinc-500 mt-1">
+          Used by the new-trade form, sizer, and the standard tier on the scanner.
+          e.g. <code>0.005</code> = 0.5% of capital risked per trade.
+        </p>
       </div>
+      <div>
+        <label>Conservative risk per trade (decimal)</label>
+        <input type="number" step="0.0005" min="0" max="0.05"
+               name="risk_pct_low" value="{{ settings.risk_pct_low }}" required>
+        <p class="text-xs text-zinc-500 mt-1">
+          The scanner shows a second qty column at this tier — pick it for lower-conviction setups.
+          Should be ≤ standard risk. e.g. <code>0.0025</code> = 0.25%.
+        </p>
+      </div>
+
+      <div class="md:col-span-2">
+        <label>Max simultaneous open heat (decimal)</label>
+        <input type="number" step="0.005" min="0" max="0.50"
+               name="max_open_heat_pct" value="{{ settings.max_open_heat_pct }}" required>
+        <p class="text-xs text-zinc-500 mt-1">
+          Hard cap on total ₹-at-risk across <strong>all</strong> open positions. The cockpit risk-budget bar turns red over this.
+          e.g. <code>0.06</code> = 6% (caps you at ~12 standard-tier trades open at once).
+        </p>
+      </div>
+
       <div>
         <label>Default allocation per trade (decimal)</label>
-        <input type="number" step="0.01" name="default_allocation_pct" value="{{ settings.default_allocation_pct }}" required>
-        <p class="text-xs text-zinc-500 mt-1">e.g. 0.10 means 10% allocation per trade</p>
+        <input type="number" step="0.01" min="0" max="1" name="default_allocation_pct"
+               value="{{ settings.default_allocation_pct }}" required>
+        <p class="text-xs text-zinc-500 mt-1">e.g. 0.10 = 10% allocation. Used by the sizer's "by allocation" mode.</p>
       </div>
+
       <div class="md:col-span-2 flex justify-end">
-        <button class="btn btn-primary">Save</button>
+        <button class="btn btn-primary"><i data-lucide="save"></i>Save</button>
       </div>
     </form>
   </div>

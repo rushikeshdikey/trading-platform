@@ -13,7 +13,17 @@ from .models import Setting
 DEFAULTS = {
     "starting_capital": "1000000",
     "starting_capital_date": "2025-01-01",
-    "default_risk_pct": "0.005",
+
+    # Risk tiers per trade — both user-editable. The scanner shows BOTH so
+    # the user picks per-row based on conviction. The new-trade form
+    # defaults to `default_risk_pct` (the standard tier).
+    "default_risk_pct": "0.005",       # standard tier, 0.5% of capital
+    "risk_pct_low": "0.0025",          # conservative tier, 0.25% of capital
+
+    # Hard cap on simultaneous risk across all open positions. The cockpit
+    # turns red when open heat exceeds this.
+    "max_open_heat_pct": "0.06",       # 6% of capital
+
     "default_allocation_pct": "0.10",
     "default_sl_pct": "0.025",
     "currency_symbol": "₹",

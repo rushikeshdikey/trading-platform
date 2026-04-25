@@ -114,14 +114,21 @@ def _build_unified_results(db: Session) -> dict | None:
                 slot["max_score"] = c.score
                 slot["primary"] = c
 
-    # Compute capital ONCE — current_capital walks the whole trade history
-    # and was previously called per row.
+    # Compute capital + risk tiers ONCE per render — current_capital walks
+    # the whole trade history; risk tiers do a Settings lookup. The unified
+    # table sizes 100 candidates so per-row recomputation hurts.
+    from ..scanner.risk import get_user_risk_tiers
+    from ..scanner.sparklines import bulk_sparklines
     capital = dash_svc.current_capital(db)
+    risk_low, risk_high = get_user_risk_tiers(db)
+
+    # Bulk-build SVG sparklines for every visible symbol in one query.
+    sparklines = bulk_sparklines(db, [s for s in grouped.keys()], lookback=30)
 
     out_rows = []
     for sym, slot in grouped.items():
         c = slot["primary"]
-        sizing = _size_one(db, c, capital=capital)
+        sizing = _size_one(db, c, capital=capital, risk_low=risk_low, risk_high=risk_high)
         out_rows.append({
             "symbol": sym,
             "scans": sorted(slot["scans"], key=lambda s: s["score"], reverse=True),
@@ -129,6 +136,7 @@ def _build_unified_results(db: Session) -> dict | None:
             "primary": c,
             "sizing": sizing,
             "on_watchlist": sym in on_watchlist,
+            "sparkline": sparklines.get(sym, ""),
             # Conviction tier: 2+ scans = A+, single scan A if score >= 60, else B
             "tier": (
                 "A+" if len(slot["scans"]) >= 2
@@ -148,6 +156,9 @@ def _build_unified_results(db: Session) -> dict | None:
         "oldest_run_at": oldest_run_at,
         "universe_size": universe_size,
         "total_elapsed_ms": total_elapsed,
+        "risk_low": risk_low,
+        "risk_high": risk_high,
+        "capital": capital,
         "scan_summary": {
             scan_type: {
                 "label": SCAN_TYPES[scan_type][0],
