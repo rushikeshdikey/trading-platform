@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}Manage users · Trading Journal{% endblock %}
+{% block content %}
+<div class="max-w-5xl mx-auto space-y-6">
+
+  <div class="flex items-center justify-between flex-wrap gap-3">
+    <div>
+      <h1 class="text-2xl font-semibold tracking-tight flex items-center gap-2">
+        <i data-lucide="users" class="w-6 h-6"></i>Users
+      </h1>
+      <p class="text-sm text-zinc-500">Admin-only. Create accounts here and share the temp password out-of-band.</p>
+    </div>
+  </div>
+
+  {% if ok %}
+  <div class="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm">
+    Saved.
+  </div>
+  {% endif %}
+  {% if err == 'invalid_email' %}
+  <div class="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-sm">That doesn't look like an email address.</div>
+  {% elif err == 'email_taken' %}
+  <div class="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-sm">An account with that email already exists.</div>
+  {% elif err == 'cannot_deactivate_self' %}
+  <div class="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-sm">You can't deactivate your own account.</div>
+  {% elif err == 'cannot_demote_self' %}
+  <div class="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-sm">You can't remove admin from your own account.</div>
+  {% endif %}
+
+  <!-- Create user -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title flex items-center gap-2"><i data-lucide="user-plus" class="w-4 h-4"></i>Add a new user</div>
+      <div class="card-description">A temp password will be shown once on the next screen — copy it before refreshing.</div>
+    </div>
+    <form method="post" action="/admin/users" class="p-6 grid md:grid-cols-3 gap-4">
+      <div class="md:col-span-1">
+        <label class="block text-xs font-semibold uppercase tracking-wide text-zinc-500 mb-1">Email</label>
+        <input type="email" name="email" required autofocus
+               class="w-full px-3 py-2 border border-zinc-200 rounded focus:outline-none focus:ring-2 focus:ring-zinc-900">
+      </div>
+      <div class="md:col-span-1">
+        <label class="block text-xs font-semibold uppercase tracking-wide text-zinc-500 mb-1">Full name (optional)</label>
+        <input type="text" name="full_name"
+               class="w-full px-3 py-2 border border-zinc-200 rounded focus:outline-none focus:ring-2 focus:ring-zinc-900">
+      </div>
+      <div class="md:col-span-1 flex items-end gap-3">
+        <label class="flex items-center gap-2 text-sm">
+          <input type="checkbox" name="is_admin" value="1" class="rounded border-zinc-300">
+          Admin
+        </label>
+        <button type="submit" class="btn btn-primary ml-auto">
+          <i data-lucide="plus"></i>Create user
+        </button>
+      </div>
+    </form>
+  </div>
+
+  <!-- User list -->
+  <div class="card">
+    <div class="card-header"><div class="card-title">{{ users|length }} user{{ 's' if users|length != 1 else '' }}</div></div>
+    <div class="overflow-x-auto">
+      <table class="jrnl">
+        <thead>
+          <tr>
+            <th>Email</th><th>Name</th><th>Role</th><th>Status</th><th>Joined</th><th>Last login</th><th class="text-right">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for u in users %}
+          <tr>
+            <td class="font-medium">{{ u.email }}</td>
+            <td class="text-zinc-600">{{ u.full_name or '—' }}</td>
+            <td>
+              {% if u.is_admin %}
+                <span class="pill bg-zinc-900 text-white border-zinc-900 text-[10px] font-semibold">ADMIN</span>
+              {% else %}
+                <span class="text-xs text-zinc-500">User</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if u.is_active %}
+                <span class="pill bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px]">Active</span>
+              {% else %}
+                <span class="pill bg-zinc-100 text-zinc-500 border-zinc-200 text-[10px]">Disabled</span>
+              {% endif %}
+              {% if u.must_change_password %}
+                <span class="pill bg-amber-50 text-amber-700 border-amber-200 text-[10px] ml-1" title="User must change password on next login">Pwd reset pending</span>
+              {% endif %}
+            </td>
+            <td class="text-xs text-zinc-500 tabular-nums">{{ u.created_at.strftime('%Y-%m-%d') }}</td>
+            <td class="text-xs text-zinc-500 tabular-nums">{{ u.last_login_at.strftime('%Y-%m-%d %H:%M') if u.last_login_at else '—' }}</td>
+            <td class="text-right whitespace-nowrap">
+              <form method="post" action="/admin/users/{{ u.id }}/reset-password" class="inline">
+                <button class="btn btn-outline !py-1 !px-2 text-xs" title="Generate a new temp password">
+                  <i data-lucide="key-round"></i>Reset
+                </button>
+              </form>
+              <form method="post" action="/admin/users/{{ u.id }}/toggle-active" class="inline">
+                <button class="btn btn-ghost !py-1 !px-2 text-xs"
+                        title="{{ 'Deactivate' if u.is_active else 'Activate' }} account">
+                  <i data-lucide="{{ 'user-x' if u.is_active else 'user-check' }}"></i>
+                </button>
+              </form>
+              <form method="post" action="/admin/users/{{ u.id }}/toggle-admin" class="inline">
+                <button class="btn btn-ghost !py-1 !px-2 text-xs"
+                        title="{{ 'Remove admin' if u.is_admin else 'Make admin' }}">
+                  <i data-lucide="{{ 'shield-off' if u.is_admin else 'shield' }}"></i>
+                </button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+{% endblock %}

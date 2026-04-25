@@ -1,4 +1,3 @@
-from pathlib import Path
 from tempfile import NamedTemporaryFile
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
@@ -13,35 +12,16 @@ from ..models import Trade
 router = APIRouter(prefix="/import")
 
 
-REPO_XLSX = Path(__file__).resolve().parent.parent.parent / "Rushikesh's Trading Journal - 2025.xlsx"
-
-
 @router.get("", response_class=HTMLResponse)
 def import_page(request: Request, db: Session = Depends(get_db)):
     trade_count = db.query(Trade).count()
-    repo_file_exists = REPO_XLSX.exists()
     return templates.TemplateResponse(
         request,
         "import.html",
         {
             "trade_count": trade_count,
-            "repo_file_exists": repo_file_exists,
-            "repo_file_name": REPO_XLSX.name if repo_file_exists else None,
             "result": None,
         },
-    )
-
-
-@router.post("/from-repo", response_class=HTMLResponse)
-def import_from_repo(request: Request, db: Session = Depends(get_db)):
-    if not REPO_XLSX.exists():
-        result = {"error": f"File not found: {REPO_XLSX.name}"}
-    else:
-        result = importer.import_from_xlsx(db, REPO_XLSX)
-        importer.import_capital_from_dashboard(db, REPO_XLSX)
-    return RedirectResponse(
-        url=f"/import?imported={result.get('imported', 0)}&skipped={result.get('skipped', 0)}",
-        status_code=303,
     )
 
 

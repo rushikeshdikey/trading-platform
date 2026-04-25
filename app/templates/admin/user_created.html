@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Password reset' if is_reset else 'User created' }} · Trading Journal{% endblock %}
+{% block content %}
+<div class="max-w-2xl mx-auto space-y-6">
+
+  <div class="rounded-xl border-2 border-emerald-300 bg-emerald-50 p-6">
+    <div class="flex items-center gap-3 mb-3">
+      <i data-lucide="{{ 'key-round' if is_reset else 'check-circle' }}" class="w-6 h-6 text-emerald-700"></i>
+      <h1 class="text-xl font-semibold text-emerald-900">
+        {{ 'Password reset for ' ~ new_user.email if is_reset else 'User created — ' ~ new_user.email }}
+      </h1>
+    </div>
+    <p class="text-sm text-emerald-900 mb-5">
+      Send the user this temporary password — they'll be forced to change it on first login.
+      <strong>This password is shown once. If you navigate away or refresh, it's gone.</strong>
+    </p>
+
+    <div class="bg-white border border-emerald-300 rounded-lg p-4 flex items-center justify-between gap-3"
+         x-data="{ copied: false, async copy() { await navigator.clipboard.writeText('{{ temp_password }}'); this.copied = true; setTimeout(() => this.copied = false, 2000); } }">
+      <code class="font-mono text-base tracking-wide select-all">{{ temp_password }}</code>
+      <button type="button" @click="copy()" class="btn btn-primary !py-1.5 !px-3 text-xs">
+        <i data-lucide="copy"></i>
+        <span x-text="copied ? 'Copied!' : 'Copy'"></span>
+      </button>
+    </div>
+
+    <div class="mt-5 text-xs text-emerald-800 bg-emerald-100 px-3 py-2 rounded">
+      <strong>Login URL:</strong> share <a href="/login" class="underline font-semibold">{{ request.url.scheme }}://{{ request.url.netloc }}/login</a> alongside the password.
+    </div>
+  </div>
+
+  <div class="flex items-center gap-3">
+    <a href="/admin/users" class="btn btn-outline">
+      <i data-lucide="arrow-left"></i>Back to users
+    </a>
+    {% if not is_reset %}
+    <a href="/admin/users" class="btn btn-ghost text-sm">
+      <i data-lucide="user-plus"></i>Add another
+    </a>
+    {% endif %}
+  </div>
+
+</div>
+{% endblock %}

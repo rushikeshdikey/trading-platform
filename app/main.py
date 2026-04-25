@@ -17,6 +17,7 @@ settings.validate_for_runtime()
 upgrade_to_head()
 
 from .routers import (  # noqa: E402
+    admin as admin_router,
     auth as kite_auth,
     breadth as breadth_router,
     cockpit as cockpit_router,
@@ -163,3 +164,4 @@ app.include_router(insights.router, dependencies=_authed)
 app.include_router(breadth_router.router, dependencies=_authed)
 app.include_router(scanners.router, dependencies=_authed)
 app.include_router(watchlist.router, dependencies=_authed)
+app.include_router(admin_router.router, dependencies=_authed)

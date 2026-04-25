@@ -50,19 +50,7 @@
   </div>
 
   <div class="card p-6">
-    <h3 class="font-semibold mb-2">Option 1 — use the xlsx already in the repo</h3>
-    {% if repo_file_exists %}
-      <p class="text-sm text-zinc-600 mb-4">Detected: <code class="text-xs bg-zinc-100 px-2 py-0.5 rounded">{{ repo_file_name }}</code></p>
-      <form method="post" action="/import/from-repo" onsubmit="return confirm('This will replace all existing trades. Continue?');">
-        <button class="btn btn-primary">Import from repo file</button>
-      </form>
-    {% else %}
-      <p class="text-sm text-zinc-500">No xlsx found next to the app. Use option 2 below.</p>
-    {% endif %}
-  </div>
-
-  <div class="card p-6">
-    <h3 class="font-semibold mb-2">Option 2 — upload an xlsx</h3>
+    <h3 class="font-semibold mb-2">Option 1 — upload an xlsx</h3>
     <p class="text-sm text-zinc-600 mb-4">Any Excel file following the same <code class="text-xs bg-zinc-100 px-2 py-0.5 rounded">DTrades</code> layout.</p>
     <form method="post" action="/import/upload" enctype="multipart/form-data" class="flex items-end gap-3"
           onsubmit="return confirm('This will replace all existing trades. Continue?');">
@@ -72,7 +60,7 @@
   </div>
 
   <div class="card p-6 border-t-4 border-emerald-500">
-    <h3 class="font-semibold mb-2">Option 3 — Zerodha tradebook (CSV or XLSX)</h3>
+    <h3 class="font-semibold mb-2">Option 2 — Zerodha tradebook (CSV or XLSX)</h3>
     <p class="text-sm text-zinc-600 mb-4">
       Export from Zerodha Console → Reports → Tradebook. CSV or XLSX both work.
       Imports are <strong>append-only and deduplicated</strong> on Zerodha's Trade ID,
