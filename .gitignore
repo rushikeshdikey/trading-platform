@@ -5,10 +5,18 @@ __pycache__/
 .pytest_cache/
 data/*.db
 data/*.db-journal
+data/*.db.backup-*
 .DS_Store
 .env
 .idea/
 .vscode/
+
+# Local working notes — don't push.
+todo.md
+
+# Raw trading data files — never check in your real broker exports.
+*.xlsx
+!app/templates/**/*.xlsx
 
 # Tailwind CLI binary (downloaded by tailwind/build.sh)
 bin/

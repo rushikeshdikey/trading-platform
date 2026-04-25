@@ -1,0 +1,30 @@
+{% extends "auth/_layout.html" %}
+{% block title %}Set up admin · Trading Journal{% endblock %}
+{% block content %}
+<h1>First-time setup</h1>
+<p class="lede">No accounts exist yet. Create the admin account — that's you.</p>
+
+{% if err == "invalid_email" %}
+  <div class="auth-error">That doesn't look like an email address.</div>
+{% elif err == "weak_password" %}
+  <div class="auth-error">Password must be at least 10 characters.</div>
+{% elif err == "password_mismatch" %}
+  <div class="auth-error">Passwords don't match.</div>
+{% endif %}
+
+<form method="post" action="/setup">
+  <label>Your name (optional)</label>
+  <input type="text" name="full_name">
+  <label>Email</label>
+  <input type="email" name="email" required autofocus>
+  <label>Password (10+ chars)</label>
+  <input type="password" name="password" required minlength="10">
+  <label>Confirm password</label>
+  <input type="password" name="password_confirm" required minlength="10">
+  <button type="submit">Create admin account</button>
+</form>
+
+<div class="auth-foot">
+  This screen disappears after the first account is created.
+</div>
+{% endblock %}

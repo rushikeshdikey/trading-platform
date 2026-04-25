@@ -7,6 +7,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -275,3 +276,41 @@ class InstrumentPrice(Base):
     prev_close: Mapped[float | None] = mapped_column(Float, nullable=True)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_error: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class User(Base):
+    """Single account that logs into the app.
+
+    Onboarding is admin-driven: an existing admin creates the user with a
+    temp password, shares it out-of-band, the user logs in and changes it.
+    No public signup form. Email is the login identifier and is stored
+    lower-cased.
+
+    Per-user Kite credentials live as encrypted blobs (Fernet, key derived
+    from `SECRET_KEY`). Decryption helpers live in `app/auth.py`.
+    """
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String, nullable=False)
+    full_name: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    must_change_password: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False
+    )
+
+    # Per-user Kite Connect credentials. Each user supplies their own Kite
+    # developer-app keys. Phase 3 wires these into kite.py.
+    kite_api_key_enc: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    kite_api_secret_enc: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    kite_access_token_enc: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    kite_token_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

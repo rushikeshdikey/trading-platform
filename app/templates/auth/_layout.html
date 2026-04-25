@@ -1,0 +1,37 @@
+{# Minimal auth-page layout — re-uses base.html shell but renders a centered
+   card without the global nav (since the user isn't logged in yet). #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}Sign in · Trading Journal{% endblock %}</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="stylesheet" href="/static/app.css">
+  <link rel="preconnect" href="https://rsms.me/">
+  <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+  <style>
+    body { font-family: 'Inter var', ui-sans-serif, system-ui, sans-serif; background: #fafafa; color: #09090b; -webkit-font-smoothing: antialiased; }
+    .auth-shell { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 2rem; }
+    .auth-card { width: 100%; max-width: 420px; background: #fff; border: 1px solid #e4e4e7; border-radius: 0.75rem; padding: 2rem; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
+    .auth-card h1 { font-size: 1.5rem; font-weight: 600; margin-bottom: 0.25rem; letter-spacing: -0.01em; }
+    .auth-card .lede { color: #71717a; font-size: 0.875rem; margin-bottom: 1.5rem; }
+    .auth-card label { display: block; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: #52525b; margin-top: 0.85rem; margin-bottom: 0.3rem; }
+    .auth-card input { width: 100%; padding: 0.55rem 0.75rem; border: 1px solid #e4e4e7; border-radius: 0.4rem; font-size: 0.95rem; background: #fff; }
+    .auth-card input:focus { outline: 2px solid #18181b; outline-offset: -1px; }
+    .auth-card button { margin-top: 1.25rem; width: 100%; background: #18181b; color: #fafafa; border: 0; padding: 0.65rem 1rem; border-radius: 0.4rem; font-weight: 500; cursor: pointer; }
+    .auth-card button:hover { background: #27272a; }
+    .auth-error { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; padding: 0.6rem 0.85rem; border-radius: 0.4rem; font-size: 0.85rem; margin-bottom: 1rem; }
+    .auth-success { background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; padding: 0.6rem 0.85rem; border-radius: 0.4rem; font-size: 0.85rem; margin-bottom: 1rem; }
+    .auth-foot { text-align: center; font-size: 0.8rem; color: #71717a; margin-top: 1.25rem; }
+    .auth-foot a { color: #18181b; text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="auth-shell">
+    <div class="auth-card">
+      {% block content %}{% endblock %}
+    </div>
+  </div>
+</body>
+</html>
