@@ -51,13 +51,22 @@ NSE_INDEX_URLS: dict[str, str] = {
 
 DEFAULT_INDEX = "total_market"
 
+# NSE archives sometimes blackholes connections from cloud IPs unless the
+# request looks like a real browser tab. Mirror the headers that bars_cache
+# uses (which work in prod) — User-Agent + Accept-Language + Referer.
 _HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     ),
     "Accept": "text/csv,*/*;q=0.9",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://www.nseindia.com/",
 }
+
+# Hard-cap: NSE either responds within a few seconds or it doesn't respond
+# at all. Tight timeout means we fail fast instead of pinning a worker.
+_HTTP_TIMEOUT_S = 6.0
 
 # In-memory cache keyed by index name. Persisted to disk so a restart
 # doesn't trigger another fetch within the TTL.
@@ -109,7 +118,7 @@ def _fetch(index_name: str) -> list[dict]:
     """Download from NSE archives. Caller holds the lock."""
     url = NSE_INDEX_URLS[index_name]
     log.info("fetching %s from %s", index_name, url)
-    resp = requests.get(url, headers=_HEADERS, timeout=15)
+    resp = requests.get(url, headers=_HEADERS, timeout=_HTTP_TIMEOUT_S)
     resp.raise_for_status()
     rows = _parse_csv(resp.content)
     if not rows:
@@ -117,6 +126,52 @@ def _fetch(index_name: str) -> list[dict]:
     _disk_save(index_name, resp.content)
     log.info("fetched %d rows for %s", len(rows), index_name)
     return rows
+
+
+# ---------------------------------------------------------------------------
+# Background refresh — never block a request thread on NSE.
+# ---------------------------------------------------------------------------
+
+_refresh_thread: threading.Thread | None = None
+_refresh_status: dict = {"running": False, "last_error": None, "last_count": 0, "last_finished_at": None}
+
+
+def _refresh_worker(index_name: str) -> None:
+    global _refresh_status
+    started = datetime.utcnow()
+    try:
+        rows = _fetch(index_name)
+        with _lock:
+            _cache[index_name] = _Cached(started, rows)
+        _refresh_status = {
+            "running": False, "last_error": None,
+            "last_count": len(rows), "last_finished_at": datetime.utcnow().isoformat(),
+        }
+    except Exception as exc:  # noqa: BLE001
+        log.warning("background NSE index refresh failed: %s", exc)
+        _refresh_status = {
+            "running": False, "last_error": f"{type(exc).__name__}: {exc}",
+            "last_count": 0, "last_finished_at": datetime.utcnow().isoformat(),
+        }
+
+
+def start_background_refresh(index_name: str = DEFAULT_INDEX) -> bool:
+    """Kick off a daemon thread to refresh the index list. Returns True if a
+    new refresh started, False if one is already in flight."""
+    global _refresh_thread, _refresh_status
+    with _lock:
+        if _refresh_thread is not None and _refresh_thread.is_alive():
+            return False
+        _refresh_status = {"running": True, "last_error": None, "last_count": 0, "last_finished_at": None}
+        _refresh_thread = threading.Thread(
+            target=_refresh_worker, args=(index_name,), daemon=True,
+        )
+        _refresh_thread.start()
+    return True
+
+
+def refresh_status() -> dict:
+    return dict(_refresh_status)
 
 
 def get_constituents(

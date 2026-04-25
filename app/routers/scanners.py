@@ -215,19 +215,13 @@ def refresh_fundamentals(
 
 @router.post("/refresh-index-universe", response_class=HTMLResponse)
 def refresh_index_universe(request: Request):
-    """Force-refresh the NSE Total Market constituent list. Cheap (one HTTP
-    call, ~30 KB), so this is sync. The page reload will show the new count."""
+    """Kick off a background refresh of the NSE Total Market constituent list.
+    Returns immediately so a slow / blackholed NSE call can't pin a worker
+    and take the whole site down (we got bitten by this — see jobs.py)."""
     from ..scanner import index_universe as idx_uni
-    try:
-        rows = idx_uni.get_constituents(force_refresh=True)
-        return RedirectResponse(
-            url=f"/scanners?idx_refresh={len(rows)}", status_code=303,
-        )
-    except Exception as exc:  # noqa: BLE001
-        return RedirectResponse(
-            url=f"/scanners?error=index+refresh+failed:+{type(exc).__name__}",
-            status_code=303,
-        )
+    started = idx_uni.start_background_refresh()
+    msg = "started" if started else "already_running"
+    return RedirectResponse(url=f"/scanners?idx_refresh={msg}", status_code=303)
 
 
 @router.post("/refresh-bars", response_class=HTMLResponse)
