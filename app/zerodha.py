@@ -502,6 +502,62 @@ def _apply_leg(
 # -- Public entry points ---------------------------------------------------
 
 
+def fetch_today_via_kite(db: Session) -> ReconResult:
+    """Pull today's executions from Kite's trades() API → same append pipeline.
+
+    Kite's ``trades()`` returns every execution (fill) for the current trading
+    day. We map each row to our ``Execution`` dataclass and hand it to
+    ``apply_executions_append`` — same dedup ledger (Trade ID), same FIFO
+    reconstruction as the xlsx upload path. Token-expiry is caller's problem:
+    if not authed, raise so the UI can redirect to /auth/zerodha/login.
+    """
+    from . import kite as kite_svc
+
+    kc = kite_svc.client(db)
+    if kc is None:
+        raise RuntimeError("Not authenticated with Kite — log in at /settings")
+
+    try:
+        rows = kc.trades() or []
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"Kite trades() failed: {exc}") from exc
+
+    execs: list[Execution] = []
+    for r in rows:
+        side_raw = str(r.get("transaction_type") or "").upper()
+        side = "B" if side_raw == "BUY" else "S" if side_raw == "SELL" else None
+        if side is None:
+            continue
+        ts = r.get("fill_timestamp") or r.get("exchange_timestamp") or r.get("order_timestamp")
+        d = ts.date() if hasattr(ts, "date") else _parse_date(ts)
+        if d is None:
+            continue
+        try:
+            qty = int(r.get("quantity") or 0)
+            price = float(r.get("average_price") or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if qty <= 0 or price <= 0:
+            continue
+        tid = r.get("trade_id")
+        execs.append(
+            Execution(
+                symbol=str(r.get("tradingsymbol") or "").upper(),
+                date=d,
+                side=side,
+                qty=qty,
+                price=price,
+                trade_id=str(tid) if tid not in (None, "") else None,
+                order_id=str(r.get("order_id") or "") or None,
+                exchange=str(r.get("exchange") or "") or None,
+            )
+        )
+
+    result = apply_executions_append(db, execs)
+    result.executions_parsed = len(execs)
+    return result
+
+
 def import_tradebook(
     db: Session,
     *,

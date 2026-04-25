@@ -10,15 +10,18 @@ from .db import Base, SessionLocal, engine
 from .routers import (
     auth,
     breadth as breadth_router,
+    cockpit as cockpit_router,
     dashboard,
     imports,
     instruments,
     insights,
     masterlist_routes,
     prices as prices_router,
+    scanners,
     settings_routes,
     sizing,
     trades,
+    watchlist,
 )
 
 Base.metadata.create_all(bind=engine)
@@ -67,7 +70,7 @@ def api_status():
 
 @app.get("/")
 def root():
-    return RedirectResponse(url="/dashboard", status_code=303)
+    return RedirectResponse(url="/cockpit", status_code=303)
 
 
 @app.get("/health")
@@ -75,6 +78,7 @@ def health():
     return {"ok": True, "today": date.today().isoformat()}
 
 
+app.include_router(cockpit_router.router)
 app.include_router(dashboard.router)
 app.include_router(trades.router)
 app.include_router(sizing.router)
@@ -86,3 +90,5 @@ app.include_router(auth.router)
 app.include_router(instruments.router)
 app.include_router(insights.router)
 app.include_router(breadth_router.router)
+app.include_router(scanners.router)
+app.include_router(watchlist.router)

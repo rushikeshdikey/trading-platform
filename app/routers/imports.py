@@ -71,6 +71,32 @@ async def import_zerodha(
     )
 
 
+@router.post("/zerodha/sync-today", response_class=HTMLResponse)
+def sync_zerodha_today(request: Request, db: Session = Depends(get_db)):
+    """One-click pull of today's Zerodha executions via Kite's trades() API."""
+    try:
+        result = zerodha.fetch_today_via_kite(db)
+    except RuntimeError as exc:
+        return RedirectResponse(
+            url=f"/import?kite_error={exc}", status_code=303
+        )
+    return templates.TemplateResponse(
+        request,
+        "import_result.html",
+        {
+            "trades_created": result.trades_created,
+            "trades_extended": result.trades_extended,
+            "trades_closed": result.trades_closed,
+            "executions_parsed": result.executions_parsed,
+            "executions_applied": result.executions_applied,
+            "executions_skipped_duplicate": result.executions_skipped_duplicate,
+            "symbols_touched": sorted(result.symbols_touched),
+            "warnings": result.warnings[:20],
+            "more_warnings": max(0, len(result.warnings) - 20),
+        },
+    )
+
+
 @router.post("/upload", response_class=HTMLResponse)
 async def import_upload(
     request: Request,

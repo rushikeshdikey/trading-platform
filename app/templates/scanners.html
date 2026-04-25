@@ -1,0 +1,224 @@
+{% extends "base.html" %}
+{% block title %}Scanners · Trading Journal{% endblock %}
+{% block content %}
+<div class="max-w-7xl mx-auto space-y-6">
+  <div>
+    <h1 class="text-2xl font-bold">Scanners</h1>
+    <p class="text-zinc-500 text-sm mt-1">
+      EOD swing setups across NSE + BSE equities, gated to market cap ≥ ₹900 Cr.
+      Pattern parameters are hardcoded and tuned for a 180-bar lookback.
+      Every result is risk-sized against your current capital so position size is never eyeballed.
+    </p>
+  </div>
+
+  {% set refresh = request.query_params.get('refresh') %}
+  {% set err = request.query_params.get('error') %}
+  {% set rf = request.query_params.get('refresh_fund') %}
+  {% set rf_err = request.query_params.get('refresh_fund_error') %}
+  {% if refresh %}
+    <div class="p-3 rounded-lg bg-sky-50 border border-sky-200 text-sky-800 text-sm">
+      <strong>Bars cache refreshed:</strong> <span class="tabular-nums">{{ refresh }}</span>
+    </div>
+  {% endif %}
+  {% if rf %}
+    <div class="p-3 rounded-lg bg-sky-50 border border-sky-200 text-sky-800 text-sm">
+      <strong>Market-cap refresh:</strong> {{ rf }} (running in background — reload to see progress)
+    </div>
+  {% endif %}
+  {% if rf_err %}
+    <div class="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-sm">
+      <strong>Market-cap refresh error:</strong> {{ rf_err }}
+    </div>
+  {% endif %}
+  {% if err %}
+    <div class="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-sm">
+      <strong>Scan error:</strong> {{ err }}
+    </div>
+  {% endif %}
+
+  <!-- Cache status: bars + market caps -->
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="card p-4">
+      <div class="flex items-center justify-between mb-2">
+        <div class="text-xs uppercase tracking-wide text-zinc-500 font-semibold">Bars cache (NSE + BSE)</div>
+        <form method="post" action="/scanners/refresh-bars" class="inline">
+          <button class="btn btn-outline !py-1 !px-2 text-xs" title="Download latest bhavcopies">
+            <i data-lucide="refresh-cw"></i>Refresh
+          </button>
+        </form>
+      </div>
+      <div class="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm">
+        <div><span class="metric-label">Rows</span><div class="font-semibold tabular-nums">{{ cache.rows }}</div></div>
+        <div><span class="metric-label">Symbols</span><div class="font-semibold tabular-nums">{{ cache.symbols }}</div></div>
+        <div><span class="metric-label">Latest</span><div class="font-semibold tabular-nums">{{ cache.latest_date or '—' }}</div></div>
+      </div>
+      {% if cache.rows == 0 %}
+        <div class="mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1 rounded">Cold start: first refresh pulls ~180 days for both exchanges (slow).</div>
+      {% endif %}
+    </div>
+
+    <div class="card p-4">
+      <div class="flex items-center justify-between mb-2">
+        <div class="text-xs uppercase tracking-wide text-zinc-500 font-semibold">Market-cap filter ≥ ₹{{ '{:,.0f}'.format(mcap_min_rs / 10000000) }} Cr</div>
+        <form method="post" action="/scanners/refresh-fundamentals" class="inline">
+          <button class="btn btn-outline !py-1 !px-2 text-xs"
+                  {% if mcap_refresh_status.running %}disabled{% endif %}
+                  title="Pulls market caps from yfinance for the current universe — 5-10 min cold start">
+            <i data-lucide="refresh-cw" {% if mcap_refresh_status.running %}class="animate-spin"{% endif %}></i>
+            {% if mcap_refresh_status.running %}Refreshing…{% else %}Refresh fundamentals{% endif %}
+          </button>
+        </form>
+      </div>
+      <div class="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm">
+        <div><span class="metric-label">Cached</span><div class="font-semibold tabular-nums">{{ mcap_cache.with_mcap }} / {{ mcap_cache.total }}</div></div>
+        <div><span class="metric-label">Above threshold</span><div class="font-semibold tabular-nums">{{ mcap_cache.above_threshold }}</div></div>
+        <div><span class="metric-label">Failed</span><div class="font-semibold tabular-nums {{ 'text-rose-600' if mcap_cache.failed else '' }}">{{ mcap_cache.failed }}</div></div>
+        <div><span class="metric-label">Last refresh</span><div class="font-semibold tabular-nums text-xs">{{ mcap_cache.last_refresh[:16] if mcap_cache.last_refresh else '—' }}</div></div>
+      </div>
+      {% if mcap_cache.above_threshold == 0 %}
+        <div class="mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1 rounded">
+          No symbols qualify yet — scans will return empty. Click <strong>Refresh fundamentals</strong>.
+        </div>
+      {% elif mcap_cache.failed %}
+        <div class="mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1 rounded">
+          {{ mcap_cache.failed }} symbols failed (usually yfinance rate limit). Click <strong>Refresh fundamentals</strong> again — failed rows are retried on every run.
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Scan pickers -->
+  <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
+    {% for st in scan_types %}
+      {% set lr = last_runs.get(st.key) %}
+      <form method="post" action="/scanners/run" class="card p-5 hover:shadow-md transition flex flex-col">
+        <input type="hidden" name="scan_type" value="{{ st.key }}">
+        <div class="flex items-center gap-2">
+          {% if st.key == 'horizontal_resistance' %}<i data-lucide="minus-square" class="w-4 h-4 text-zinc-500"></i>
+          {% elif st.key == 'trendline_setup' %}<i data-lucide="trending-up" class="w-4 h-4 text-zinc-500"></i>
+          {% elif st.key == 'tight_setup' %}<i data-lucide="minimize-2" class="w-4 h-4 text-zinc-500"></i>
+          {% elif st.key == 'tightness_trading' %}<i data-lucide="target" class="w-4 h-4 text-zinc-500"></i>
+          {% endif %}
+          <h3 class="font-semibold">{{ st.label }}</h3>
+        </div>
+        <p class="text-xs text-zinc-500 mt-1 flex-1">
+          {% if st.key == 'horizontal_resistance' %}Stock pressing a cluster of prior highs within 2% band, ≥ 2 touches spaced ≥ 15 days, current close within 5% below.
+          {% elif st.key == 'trendline_setup' %}Rising trendline through ≥ 3 swing lows, R² ≥ 0.92, price within 3% of line today.
+          {% elif st.key == 'tight_setup' %}ATR(14)/close < 2.5%, 20-bar range < 10%, ATR contracting vs ATR(50).
+          {% elif st.key == 'tightness_trading' %}5-phase Ankur Patel setup: strong upmove (≥30%) → base → low-vol dry-up → tight range (≤6%) → buy points A/B.
+          {% endif %}
+        </p>
+        <div class="mt-4 flex items-center justify-between gap-2">
+          <div class="text-xs text-zinc-400 tabular-nums">
+            {% if lr %}Last · {{ lr.candidates_count }} hits · {{ lr.elapsed_ms }}ms
+            {% else %}Not yet run{% endif %}
+          </div>
+          <button class="btn btn-primary"
+                  {% if cache.rows == 0 %}disabled title="Refresh bars first"
+                  {% elif mcap_cache.above_threshold == 0 %}disabled title="Refresh fundamentals first"
+                  {% endif %}>
+            <i data-lucide="play"></i>Run
+          </button>
+        </div>
+      </form>
+    {% endfor %}
+  </div>
+
+  <!-- Results -->
+  {% if results is not none %}
+    <div class="card">
+      <div class="card-header flex items-center justify-between">
+        <div>
+          <div class="card-title">{{ selected_scan.label }} — {{ run_meta.candidates_count }} candidates</div>
+          <div class="card-description">
+            Universe {{ run_meta.universe_size }} symbols · Scanned in {{ run_meta.elapsed_ms }}ms ·
+            Capital ₹{{ '{:,.0f}'.format(capital) }} · Risk tiers 0.25% / 0.5%
+          </div>
+        </div>
+      </div>
+      {% if not results %}
+        <div class="p-6 text-sm text-zinc-500">No candidates match the hardcoded thresholds today. Markets change — try again tomorrow.</div>
+      {% else %}
+      <div class="overflow-x-auto">
+        <table class="jrnl">
+          <thead>
+            <tr>
+              <th>Symbol</th><th>Close</th><th>Score</th>
+              {% if selected_scan.key == 'horizontal_resistance' %}
+                <th>Resistance</th><th>Touches</th><th>Distance</th><th>Last touch</th>
+              {% elif selected_scan.key == 'trendline_setup' %}
+                <th>Line today</th><th>R²</th><th>Touches</th><th>Proximity</th>
+              {% elif selected_scan.key == 'tight_setup' %}
+                <th>Base high</th><th>Base low</th><th>ATR%</th><th>Range%</th>
+              {% elif selected_scan.key == 'tightness_trading' %}
+                <th>Upmove</th><th>Drawdown</th><th>Tight range</th><th>Vol dry-up</th><th>Buy B</th>
+              {% endif %}
+              <th>Entry</th><th>SL</th><th>Qty (0.25% / 0.5%)</th><th>Risk ₹ (0.25% / 0.5%)</th><th class="text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in results %}
+              {% set c = row.candidate %}
+              {% set s = row.sizing %}
+              <tr>
+                <td class="font-semibold">{{ c.symbol }}</td>
+                <td class="tabular-nums">₹{{ '{:,.2f}'.format(c.close) }}</td>
+                <td class="tabular-nums">{{ c.score }}</td>
+                {% if selected_scan.key == 'horizontal_resistance' %}
+                  <td class="tabular-nums">₹{{ c.extras.resistance_level }}</td>
+                  <td class="tabular-nums">{{ c.extras.touches }}</td>
+                  <td class="tabular-nums text-amber-700">{{ c.extras.distance_pct }}%</td>
+                  <td class="text-xs text-zinc-500">{{ c.extras.last_touch_date }}</td>
+                {% elif selected_scan.key == 'trendline_setup' %}
+                  <td class="tabular-nums">₹{{ c.extras.trendline_today }}</td>
+                  <td class="tabular-nums">{{ c.extras.r_squared }}</td>
+                  <td class="tabular-nums">{{ c.extras.touches }}</td>
+                  <td class="tabular-nums text-amber-700">{{ c.extras.proximity_pct }}%</td>
+                {% elif selected_scan.key == 'tight_setup' %}
+                  <td class="tabular-nums">₹{{ c.extras.base_high }}</td>
+                  <td class="tabular-nums">₹{{ c.extras.base_low }}</td>
+                  <td class="tabular-nums">{{ c.extras.atr14_pct }}%</td>
+                  <td class="tabular-nums">{{ c.extras.range20_pct }}%</td>
+                {% elif selected_scan.key == 'tightness_trading' %}
+                  <td class="tabular-nums text-emerald-700">+{{ c.extras.upmove_gain_pct }}%</td>
+                  <td class="tabular-nums">{{ c.extras.base_drawdown_pct }}%</td>
+                  <td class="tabular-nums">{{ c.extras.tight_range_pct }}%</td>
+                  <td class="tabular-nums text-sky-700">{{ c.extras.vol_dryup_pct }}%</td>
+                  <td class="tabular-nums">₹{{ c.extras.buy_point_b }}</td>
+                {% endif %}
+                <td class="tabular-nums font-semibold">₹{{ '{:,.2f}'.format(c.suggested_entry) }}</td>
+                <td class="tabular-nums text-rose-700">₹{{ '{:,.2f}'.format(c.suggested_sl) }}</td>
+                <td class="tabular-nums"><span class="text-zinc-500">{{ s.qty_low }}</span> / <span class="font-semibold">{{ s.qty_high }}</span></td>
+                <td class="tabular-nums text-xs"><span class="text-zinc-500">₹{{ '{:,.0f}'.format(s.risk_rs_low) }}</span> / <span class="font-semibold">₹{{ '{:,.0f}'.format(s.risk_rs_high) }}</span></td>
+                <td class="text-right whitespace-nowrap">
+                  <a class="btn btn-outline !py-1 !px-2 text-xs"
+                     href="/trades/new?instrument={{ c.symbol }}&entry_price={{ c.suggested_entry }}&sl={{ c.suggested_sl }}&qty={{ s.qty_high }}&setup={{ selected_scan.label|urlencode }}"
+                     title="Pre-filled at 0.5% risk — edit qty on the form for 0.25%">
+                    <i data-lucide="file-plus"></i>Plan
+                  </a>
+                  {% if row.on_watchlist %}
+                    <span class="pill bg-zinc-100 text-zinc-500 border-zinc-200 text-[10px]">Watching</span>
+                  {% else %}
+                    <form method="post" action="/watchlist/add" class="inline">
+                      <input type="hidden" name="symbol" value="{{ c.symbol }}">
+                      <input type="hidden" name="setup_label" value="{{ selected_scan.label }}">
+                      <input type="hidden" name="alert_price" value="{{ c.suggested_entry }}">
+                      <input type="hidden" name="suggested_sl" value="{{ c.suggested_sl }}">
+                      <input type="hidden" name="notes" value="Score {{ c.score }} · close ₹{{ c.close }}">
+                      <input type="hidden" name="return_to" value="/scanners">
+                      <button class="btn btn-ghost !py-1 !px-2 text-xs" title="Save to watchlist">
+                        <i data-lucide="bookmark"></i>
+                      </button>
+                    </form>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+    </div>
+  {% endif %}
+</div>
+{% endblock %}

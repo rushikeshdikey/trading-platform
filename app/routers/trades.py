@@ -75,7 +75,20 @@ def list_trades(
 
 
 @router.get("/new", response_class=HTMLResponse)
-def new_trade_page(request: Request, db: Session = Depends(get_db)):
+def new_trade_page(
+    request: Request,
+    db: Session = Depends(get_db),
+    instrument: str | None = None,
+    entry_price: float | None = None,
+    sl: float | None = None,
+    qty: int | None = None,
+    setup: str | None = None,
+):
+    """Prefillable new-trade form.
+
+    Query params let the scanner and watchlist deep-link into this page with
+    entry/SL/qty populated so the user doesn't retype. All params are optional.
+    """
     capital = app_settings.get_float(db, "starting_capital", 1_000_000.0)
     default_risk = app_settings.get_float(db, "default_risk_pct", 0.005)
     default_alloc = app_settings.get_float(db, "default_allocation_pct", 0.10)
@@ -88,6 +101,11 @@ def new_trade_page(request: Request, db: Session = Depends(get_db)):
             "default_risk": default_risk,
             "default_alloc": default_alloc,
             "today": date.today().isoformat(),
+            "prefill_instrument": (instrument or "").upper(),
+            "prefill_entry": entry_price if entry_price is not None else 0,
+            "prefill_sl": sl if sl is not None else 0,
+            "prefill_qty": qty if qty is not None else 0,
+            "prefill_setup": setup or "",
         },
     )
 

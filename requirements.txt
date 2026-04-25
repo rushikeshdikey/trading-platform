@@ -8,3 +8,5 @@ pydantic==2.9.2
 yfinance>=1.3.0
 kiteconnect>=5.1.0
 python-dotenv>=1.0.0
+requests>=2.31.0
+numpy>=1.26.0

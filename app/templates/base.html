@@ -187,7 +187,10 @@
         <span class="hidden sm:inline text-base font-semibold tracking-tight">Trading Journal</span>
       </a>
 
-      <a href="/dashboard" class="nav-link {% if path.startswith('/dashboard') or path == '/' %}active{% endif %}">
+      <a href="/cockpit" class="nav-link {% if path.startswith('/cockpit') or path == '/' %}active{% endif %}">
+        <i data-lucide="gauge"></i>Cockpit
+      </a>
+      <a href="/dashboard" class="nav-link {% if path.startswith('/dashboard') %}active{% endif %}">
         <i data-lucide="layout-dashboard"></i>Dashboard
       </a>
 
@@ -223,6 +226,12 @@
       </a>
       <a href="/sizing" class="nav-link {% if path.startswith('/sizing') %}active{% endif %}">
         <i data-lucide="scale"></i>Sizer
+      </a>
+      <a href="/scanners" class="nav-link {% if path.startswith('/scanners') %}active{% endif %}">
+        <i data-lucide="radar"></i>Scanners
+      </a>
+      <a href="/watchlist" class="nav-link {% if path.startswith('/watchlist') %}active{% endif %}">
+        <i data-lucide="bookmark"></i>Watchlist
       </a>
       <a href="/breadth" class="nav-link {% if path.startswith('/breadth') %}active{% endif %}">
         <i data-lucide="bar-chart-3"></i>Breadth

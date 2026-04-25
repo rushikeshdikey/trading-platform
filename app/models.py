@@ -8,6 +8,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    Text,
     UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -190,6 +191,72 @@ class KiteInstrument(Base):
     instrument_type: Mapped[str | None] = mapped_column(String, nullable=True)
     lot_size: Mapped[int] = mapped_column(Integer, default=0)
     tick_size: Mapped[float] = mapped_column(Float, default=0.0)
+
+
+class DailyBar(Base):
+    """EOD OHLCV bar for a scanner universe symbol.
+
+    Seeded from NSE bhavcopy (free, one HTTP per day covers all NSE equities).
+    Unique on (symbol, date). Scanners read from here; nothing else depends on
+    it, so safe to truncate and refresh.
+    """
+
+    __tablename__ = "daily_bars"
+    __table_args__ = (UniqueConstraint("symbol", "date", name="uq_bar_symbol_date"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    symbol: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    open: Mapped[float] = mapped_column(Float, nullable=False)
+    high: Mapped[float] = mapped_column(Float, nullable=False)
+    low: Mapped[float] = mapped_column(Float, nullable=False)
+    close: Mapped[float] = mapped_column(Float, nullable=False)
+    volume: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class Watchlist(Base):
+    """User-curated watchlist. Rows land here from scanner results or manual add."""
+
+    __tablename__ = "watchlist"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    symbol: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
+    setup_label: Mapped[str | None] = mapped_column(String, nullable=True)
+    alert_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    suggested_sl: Mapped[float | None] = mapped_column(Float, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    added_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class ScanRun(Base):
+    """History of scanner runs (for UI 'last run at' and debugging)."""
+
+    __tablename__ = "scan_run"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    scan_type: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    universe_size: Mapped[int] = mapped_column(Integer, default=0)
+    candidates_count: Mapped[int] = mapped_column(Integer, default=0)
+    elapsed_ms: Mapped[int] = mapped_column(Integer, default=0)
+    bars_refreshed: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class InstrumentMeta(Base):
+    """Per-symbol fundamentals cache (market cap, TTL-refreshed).
+
+    Populated from yfinance ``fast_info.market_cap`` in a threaded batch.
+    Scanner uses this to gate the universe to investable mid/large caps —
+    without it, BSE-exclusive corporate bonds and illiquid small caps would
+    otherwise sneak past the liquidity filter.
+    """
+
+    __tablename__ = "instrument_meta"
+
+    symbol: Mapped[str] = mapped_column(String, primary_key=True)
+    market_cap_rs: Mapped[float | None] = mapped_column(Float, nullable=True)
+    refreshed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class InstrumentPrice(Base):

@@ -9,12 +9,45 @@
 
   {% set imported = request.query_params.get('imported') %}
   {% set skipped = request.query_params.get('skipped') %}
+  {% set kite_error = request.query_params.get('kite_error') %}
   {% if imported is not none %}
   <div class="p-4 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800">
     Imported <strong>{{ imported }}</strong> trade{{ 's' if imported != '1' else '' }}{% if skipped and skipped != '0' %}, skipped {{ skipped }} empty/invalid row{{ 's' if skipped != '1' else '' }}{% endif %}.
     <a href="/dashboard" class="font-semibold underline">See dashboard</a>.
   </div>
   {% endif %}
+  {% if kite_error %}
+  <div class="p-4 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-sm">
+    <strong>Kite sync failed:</strong> {{ kite_error }}
+    <a href="/auth/zerodha/login" class="underline font-semibold ml-2">Log in to Kite</a>
+  </div>
+  {% endif %}
+
+  <div class="card p-6 border-t-4 border-amber-500"
+       x-data='{ s: null, async load(){ try { const r = await fetch("/api/status"); if(r.ok) this.s = await r.json(); } catch(e){} } }'
+       x-init="load()">
+    <h3 class="font-semibold mb-2 flex items-center gap-2">
+      <i data-lucide="zap" class="w-4 h-4 text-amber-500"></i>
+      One-click — pull today's trades from Zerodha
+    </h3>
+    <p class="text-sm text-zinc-600 mb-4">
+      Fetches every execution from your Zerodha account for today via Kite's API and feeds it through the same
+      dedup + FIFO reconstruction pipeline as the xlsx upload. Safe to run multiple times — duplicates are skipped.
+      Requires an active Kite session (tokens expire around 06:00 IST each day).
+    </p>
+    <template x-if="s?.kite_authed">
+      <form method="post" action="/import/zerodha/sync-today">
+        <button class="btn btn-primary">
+          <i data-lucide="download-cloud"></i>Sync today's trades
+        </button>
+      </form>
+    </template>
+    <template x-if="s && !s.kite_authed">
+      <a href="/auth/zerodha/login" class="btn btn-outline">
+        <i data-lucide="log-in"></i>Log in to Kite first
+      </a>
+    </template>
+  </div>
 
   <div class="card p-6">
     <h3 class="font-semibold mb-2">Option 1 — use the xlsx already in the repo</h3>

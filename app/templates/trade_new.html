@@ -9,13 +9,13 @@
 
   <form method="post" action="/trades/new" x-data='{
       side: "B",
-      entry: 0,
-      sl: 0,
-      qty: 0,
+      entry: {{ prefill_entry or 0 }},
+      sl: {{ prefill_sl or 0 }},
+      qty: {{ prefill_qty or 0 }},
       capital: {{ capital }},
       riskPct: {{ default_risk }},
       allocPct: {{ default_alloc }},
-      setup: "",
+      setup: "{{ prefill_setup or "" }}",
       setupStats: null,
       setupLoading: false,
       riskBudget: null,
@@ -101,7 +101,7 @@
         }, 200);
       },
       // Pre-trade checklist
-      instrument: "",
+      instrument: "{{ prefill_instrument or "" }}",
       checklist: null,
       checklistLoading: false,
       checklistTimer: null,
@@ -151,7 +151,7 @@
       </div>
       <div class="grid md:grid-cols-2 gap-4">
         <div class="relative" x-data="{
-              q: '',
+              q: '{{ prefill_instrument or '' }}',
               open: false,
               matches: [],
               highlight: -1,
@@ -219,9 +219,11 @@
         </div>
         <div>
           <label>Setup</label>
-          <select name="setup" x-model="setup" @change="loadSetupStats(setup)">
+          <select name="setup" x-model="setup" @change="loadSetupStats(setup)" x-init="if (setup) loadSetupStats(setup)">
             <option value="">— Choose setup —</option>
-            {% for s in dropdowns.setup %}<option>{{ s }}</option>{% endfor %}
+            {% for s in dropdowns.setup %}<option {% if s == prefill_setup %}selected{% endif %}>{{ s }}</option>{% endfor %}
+            {# If the prefill_setup isn't in the masterlist, surface it as an ad-hoc option so the form still posts it. #}
+            {% if prefill_setup and prefill_setup not in dropdowns.setup %}<option selected>{{ prefill_setup }}</option>{% endif %}
           </select>
         </div>
         <div>

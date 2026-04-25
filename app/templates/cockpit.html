@@ -1,0 +1,193 @@
+{% extends "base.html" %}
+{% block title %}Cockpit · Trading Journal{% endblock %}
+{% block content %}
+{% set m = state.market %}
+{% set rb = state.risk_budget %}
+<div class="max-w-7xl mx-auto space-y-6">
+
+  <!-- Market verdict banner -->
+  <div class="rounded-xl border-2 px-6 py-4 {{ m.color_class }}">
+    <div class="flex flex-wrap items-center gap-x-6 gap-y-2">
+      <div class="flex items-center gap-3">
+        <span class="text-3xl font-black tracking-tight">{{ m.level }}</span>
+        <span class="text-base font-semibold">{{ m.headline }}</span>
+      </div>
+      <div class="flex-1"></div>
+      <div class="text-sm space-x-4 tabular-nums">
+        {% if m.pct_above_50ema is not none %}
+          <span><strong>{{ '%.0f'|format(m.pct_above_50ema) }}%</strong> &gt; 50 EMA</span>
+          <span><strong>{{ '%.0f'|format(m.pct_above_200ema) }}%</strong> &gt; 200 EMA</span>
+          {% if m.advances and m.declines %}<span>A/D <strong>{{ m.advances }}/{{ m.declines }}</strong></span>{% endif %}
+          <span class="text-xs opacity-75">({{ m.label }})</span>
+        {% endif %}
+      </div>
+    </div>
+    <p class="text-sm mt-1 opacity-90">{{ m.detail }}</p>
+  </div>
+
+  {% if state.cooldown.warn %}
+  <!-- Cooldown alert (consecutive losses) -->
+  <div class="rounded-lg border-l-4 border-rose-500 bg-rose-50 p-4 text-rose-900">
+    <div class="font-semibold flex items-center gap-2">
+      <i data-lucide="alert-triangle" class="w-4 h-4"></i>
+      Cooldown — {{ state.cooldown.losing_streak }} consecutive losses
+    </div>
+    <div class="text-sm mt-1">
+      Your historical baseline win rate is <strong>{{ '%.0f'|format(state.cooldown.historical_win_pct_overall * 100) }}%</strong>.
+      {% if state.cooldown.historical_win_pct_after_streak is not none %}
+        After a losing streak of this size you historically win
+        <strong>{{ '%.0f'|format(state.cooldown.historical_win_pct_after_streak * 100) }}%</strong>.
+      {% endif %}
+      Consider sitting out today, or only A+ setups.
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Two-column main grid: positions + signals on left, risk + edge on right -->
+  <div class="grid lg:grid-cols-[1fr_320px] gap-6">
+
+    <div class="space-y-6">
+
+      <!-- Open positions with action verdicts -->
+      <div class="card">
+        <div class="card-header flex items-center justify-between">
+          <div>
+            <div class="card-title flex items-center gap-2">
+              <i data-lucide="layers" class="w-4 h-4 text-zinc-500"></i>
+              Open positions — action list
+            </div>
+            <div class="card-description">Rule-based verdict per trade. High-urgency items first.</div>
+          </div>
+          <span class="text-xs text-zinc-500">{{ state.positions|length }} open</span>
+        </div>
+        {% if not state.positions %}
+          <div class="p-6 text-sm text-zinc-500">No open positions. Scan below for new entries.</div>
+        {% else %}
+        <div class="overflow-x-auto">
+          <table class="jrnl">
+            <thead>
+              <tr>
+                <th>Symbol</th><th>Setup</th><th>Days</th><th>CMP</th><th>R</th><th>SL</th><th>Risk ₹</th><th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for p in state.positions %}
+              {% set c = p.card %}
+              <tr>
+                <td class="font-semibold"><a href="/trades/{{ c.trade_id }}" class="hover:underline">{{ c.instrument }}</a></td>
+                <td class="text-xs text-zinc-500">{{ c.setup or '—' }}</td>
+                <td class="tabular-nums">{{ c.holding_days }}d</td>
+                <td class="tabular-nums">{{ ('₹' ~ '{:,.2f}'.format(c.cmp)) if c.cmp else '—' }}</td>
+                <td class="tabular-nums {{ 'text-emerald-700' if (c.r_multiple or 0) > 0 else 'text-rose-700' if (c.r_multiple or 0) < 0 else '' }}">
+                  {{ ('{:+.2f}R'.format(c.r_multiple)) if c.r_multiple is not none else '—' }}
+                </td>
+                <td class="tabular-nums text-xs">₹{{ '{:,.2f}'.format(c.effective_stop) }}</td>
+                <td class="tabular-nums text-xs">₹{{ '{:,.0f}'.format(c.risk_rs) }}</td>
+                <td>
+                  <div class="flex flex-col gap-1">
+                    <span class="pill border text-[11px] font-semibold {{ p.color_class }}">{{ p.action }}</span>
+                    <span class="text-[11px] text-zinc-500">{{ p.reason }}</span>
+                  </div>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% endif %}
+      </div>
+
+      <!-- Conviction-scored signals (lazy-loaded via HTMX) -->
+      <div class="card">
+        <div class="card-header flex items-center justify-between">
+          <div>
+            <div class="card-title flex items-center gap-2">
+              <i data-lucide="target" class="w-4 h-4 text-zinc-500"></i>
+              Today's signals — conviction-scored
+            </div>
+            <div class="card-description">All 4 scanners × market regime × your personal edge. A+ first.</div>
+          </div>
+          <button class="btn btn-outline !py-1 !px-2 text-xs"
+                  hx-get="/cockpit/signals"
+                  hx-target="#cockpit-signals"
+                  hx-swap="innerHTML"
+                  hx-indicator="#sig-spin">
+            <i data-lucide="refresh-cw"></i>Re-scan
+          </button>
+        </div>
+        <div id="cockpit-signals"
+             hx-get="/cockpit/signals"
+             hx-trigger="load"
+             hx-swap="innerHTML">
+          <div class="p-6 flex items-center gap-3 text-sm text-zinc-500">
+            <span id="sig-spin" class="inline-block">
+              <i data-lucide="loader" class="w-4 h-4 animate-spin"></i>
+            </span>
+            Running all 4 scanners and conviction-scoring against your edge…
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Right sidebar -->
+    <div class="space-y-6">
+
+      <!-- Risk budget -->
+      <div class="card p-5">
+        <div class="flex items-center gap-2 mb-3">
+          <i data-lucide="shield" class="w-4 h-4 text-zinc-500"></i>
+          <h3 class="font-semibold">Risk budget</h3>
+        </div>
+        <div class="space-y-2 text-sm">
+          <div class="flex justify-between"><span class="text-zinc-500">Capital</span><span class="font-semibold tabular-nums">₹{{ '{:,.0f}'.format(rb.capital) }}</span></div>
+          <div class="flex justify-between"><span class="text-zinc-500">Open positions</span><span class="font-semibold tabular-nums">{{ rb.open_positions }}</span></div>
+          <div class="flex justify-between"><span class="text-zinc-500">Open heat</span><span class="font-semibold tabular-nums {{ 'text-rose-700' if rb.over_budget else '' }}">₹{{ '{:,.0f}'.format(rb.open_heat_rs) }} ({{ '{:.1%}'.format(rb.open_heat_pct) }})</span></div>
+          <div class="flex justify-between"><span class="text-zinc-500">Max heat ({{ '{:.0%}'.format(rb.max_heat_pct) }})</span><span class="font-semibold tabular-nums">₹{{ '{:,.0f}'.format(rb.max_heat_rs) }}</span></div>
+        </div>
+        <div class="h-2 bg-zinc-100 rounded-full overflow-hidden mt-3">
+          <div class="h-full transition-all {{ 'bg-rose-500' if rb.over_budget else 'bg-emerald-500' }}"
+               style="width: {{ ((rb.open_heat_rs / rb.max_heat_rs * 100) if rb.max_heat_rs else 0)|round(1) }}%"></div>
+        </div>
+        <div class="text-xs text-zinc-500 mt-2">
+          {% if rb.over_budget %}
+            <span class="text-rose-700 font-semibold">Over budget by ₹{{ '{:,.0f}'.format(rb.open_heat_rs - rb.max_heat_rs) }}</span> — no new trades.
+          {% else %}
+            <span class="text-emerald-700 font-semibold">₹{{ '{:,.0f}'.format(rb.remaining_heat_rs) }}</span> available for new positions.
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- Personal edge -->
+      <div class="card p-5">
+        <div class="flex items-center gap-2 mb-3">
+          <i data-lucide="brain-circuit" class="w-4 h-4 text-zinc-500"></i>
+          <h3 class="font-semibold">Your edge by setup</h3>
+        </div>
+        {% if not state.edge %}
+          <div class="text-xs text-zinc-500">No closed-trade history yet. Tag your trades with setup labels to build this stat.</div>
+        {% else %}
+          <div class="space-y-2 text-sm">
+            {% for e in state.edge %}
+              <div class="flex items-center justify-between gap-2 py-2 border-b border-zinc-100 last:border-0">
+                <div class="flex-1 min-w-0">
+                  <div class="font-medium truncate">{{ e.setup }}</div>
+                  <div class="text-[11px] text-zinc-500">{{ e.trades }} trades · {{ '%.0f'|format(e.win_pct) }}% win</div>
+                </div>
+                <div class="text-right">
+                  {% if e.expectancy_r is not none %}
+                    <div class="font-bold tabular-nums {{ 'text-emerald-700' if e.expectancy_r > 0 else 'text-rose-700' }}">{{ '{:+.2f}R'.format(e.expectancy_r) }}</div>
+                  {% else %}
+                    <div class="text-xs text-zinc-400">—</div>
+                  {% endif %}
+                </div>
+              </div>
+            {% endfor %}
+          </div>
+        {% endif %}
+      </div>
+
+    </div>
+  </div>
+</div>
+{% endblock %}
