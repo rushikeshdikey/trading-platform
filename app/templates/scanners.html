@@ -51,9 +51,12 @@
       <form method="post" action="/scanners/refresh-bars" class="inline">
         <button class="btn btn-outline !py-1 !px-2 text-[11px]"><i data-lucide="refresh-cw"></i>Refresh bars</button>
       </form>
-      <form method="post" action="/scanners/refresh-index-universe" class="inline">
+      {# Refresh universe button intentionally hidden — NSE archives is flaky
+         from cloud IPs and pinned the workers once. Daily disk cache + lazy
+         fetch is enough; re-enable once we add proper retry / circuit breaker. #}
+      {# <form method="post" action="/scanners/refresh-index-universe" class="inline">
         <button class="btn btn-outline !py-1 !px-2 text-[11px]"><i data-lucide="refresh-cw"></i>Refresh universe</button>
-      </form>
+      </form> #}
     </span>
   </div>
   {% if cache.rows == 0 %}<div class="text-xs text-amber-700 bg-amber-50 border border-amber-200 px-3 py-2 rounded">Cold start: first <strong>Refresh bars</strong> pulls ~180 days for both exchanges (slow).</div>{% endif %}
