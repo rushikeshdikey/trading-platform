@@ -1,16 +1,27 @@
+"""SQLAlchemy engine + session factory.
+
+The engine URL comes from `settings.database_url`. SQLite is the dev default;
+production must set `DATABASE_URL` to a Postgres URL (validated at boot).
+"""
 from pathlib import Path
 
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
+from .config import settings
+
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 DATA_DIR.mkdir(exist_ok=True)
-DB_PATH = DATA_DIR / "journal.db"
+
+# SQLite needs check_same_thread=False because FastAPI uses a thread pool
+# for sync endpoints; Postgres ignores connect_args entirely.
+_connect_args: dict = {"check_same_thread": False} if settings.is_sqlite else {}
 
 engine = create_engine(
-    f"sqlite:///{DB_PATH}",
-    connect_args={"check_same_thread": False},
+    settings.database_url,
+    connect_args=_connect_args,
     future=True,
+    pool_pre_ping=not settings.is_sqlite,
 )
 
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
@@ -29,9 +40,8 @@ def get_db():
 
 
 # -- Lightweight additive migrations ---------------------------------------
-# SQLAlchemy's create_all() only creates missing tables — it doesn't add
-# columns to existing ones. For a single-user SQLite app we don't need a full
-# migration tool; this helper adds nullable columns when they're absent.
+# Pre-Alembic helper: SQLAlchemy's create_all() only creates missing tables
+# — it doesn't add columns. Once Alembic is wired up this will be retired.
 
 
 _SCHEMA_ADDITIONS: list[tuple[str, str, str]] = [

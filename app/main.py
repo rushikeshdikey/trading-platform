@@ -6,8 +6,14 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import masterlist, prices
-from .db import Base, SessionLocal, engine
-from .routers import (
+from .config import settings
+from .db import SessionLocal
+from .migrations import upgrade_to_head
+
+settings.validate_for_runtime()
+upgrade_to_head()
+
+from .routers import (  # noqa: E402
     auth,
     breadth as breadth_router,
     cockpit as cockpit_router,
@@ -23,17 +29,6 @@ from .routers import (
     trades,
     watchlist,
 )
-
-Base.metadata.create_all(bind=engine)
-
-# Additive schema migrations for columns added after initial DB creation.
-from .db import apply_schema_additions  # noqa: E402
-
-_applied = apply_schema_additions()
-if _applied:
-    import logging
-
-    logging.getLogger("journal").info("DB schema additions applied: %s", _applied)
 
 app = FastAPI(title="Trading Journal")
 

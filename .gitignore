@@ -9,3 +9,8 @@ data/*.db-journal
 .env
 .idea/
 .vscode/
+
+# Tailwind CLI binary (downloaded by tailwind/build.sh)
+bin/
+# Note: app/static/app.css is checked in so dev works without running the
+# Tailwind build first. CI/Docker build re-runs build.sh to refresh it.
