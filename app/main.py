@@ -30,6 +30,7 @@ from .routers import (  # noqa: E402
     masterlist_routes,
     prices as prices_router,
     scanners,
+    sector_rotation as sector_rotation_router,
     settings_routes,
     sizing,
     trades,
@@ -180,6 +181,7 @@ app.include_router(kite_auth.router, dependencies=_authed)
 app.include_router(instruments.router, dependencies=_authed)
 app.include_router(insights.router, dependencies=_authed)
 app.include_router(breadth_router.router, dependencies=_authed)
+app.include_router(sector_rotation_router.router, dependencies=_authed)
 app.include_router(scanners.router, dependencies=_authed)
 app.include_router(watchlist.router, dependencies=_authed)
 app.include_router(admin_router.router, dependencies=_authed)

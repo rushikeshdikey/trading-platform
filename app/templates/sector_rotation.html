@@ -1,0 +1,222 @@
+{% extends "base.html" %}
+{% block title %}Sector Rotation · Trading Journal{% endblock %}
+{% block content %}
+<div class="max-w-7xl mx-auto space-y-6">
+
+  <!-- Header -->
+  <div class="flex items-start justify-between flex-wrap gap-3">
+    <div>
+      <h1 class="text-2xl font-semibold tracking-tight">Sector Rotation</h1>
+      <p class="text-zinc-500 text-sm mt-1 max-w-3xl">
+        Where each NSE industry sits on the relative-strength / momentum plane.
+        Built from the bars cache — no external indices needed. Trail length
+        {{ rs_momentum_window }} bars; RS-Ratio Z-scored over {{ rs_ratio_window }} bars.
+      </p>
+    </div>
+    <div class="text-xs text-zinc-500 tabular-nums">
+      As of {{ anchor_date or '—' }}
+    </div>
+  </div>
+
+  {% if not points %}
+  <div class="card p-6 text-sm text-zinc-500">
+    No sectors to plot. The bars cache may be too shallow — click <strong>Refresh bars</strong> on
+    /scanners and try again in a few minutes.
+  </div>
+  {% else %}
+
+  <!-- Quadrant legend / counts -->
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+    <div class="card px-4 py-3 border-l-4 border-emerald-500">
+      <div class="text-[11px] font-bold uppercase tracking-widest text-emerald-700">Leading</div>
+      <div class="text-2xl font-bold tabular-nums">{{ quadrant_counts.Leading }}</div>
+      <div class="text-xs text-zinc-500">RS &gt; 100, momentum &gt; 100 — full-size positions land here</div>
+    </div>
+    <div class="card px-4 py-3 border-l-4 border-sky-500">
+      <div class="text-[11px] font-bold uppercase tracking-widest text-sky-700">Improving</div>
+      <div class="text-2xl font-bold tabular-nums">{{ quadrant_counts.Improving }}</div>
+      <div class="text-xs text-zinc-500">RS &lt; 100 but momentum &gt; 100 — early-stage rotation in</div>
+    </div>
+    <div class="card px-4 py-3 border-l-4 border-amber-500">
+      <div class="text-[11px] font-bold uppercase tracking-widest text-amber-700">Weakening</div>
+      <div class="text-2xl font-bold tabular-nums">{{ quadrant_counts.Weakening }}</div>
+      <div class="text-xs text-zinc-500">RS &gt; 100 but momentum &lt; 100 — trim, don't add</div>
+    </div>
+    <div class="card px-4 py-3 border-l-4 border-rose-500">
+      <div class="text-[11px] font-bold uppercase tracking-widest text-rose-700">Lagging</div>
+      <div class="text-2xl font-bold tabular-nums">{{ quadrant_counts.Lagging }}</div>
+      <div class="text-xs text-zinc-500">RS &lt; 100, momentum &lt; 100 — avoid until rotation reverses</div>
+    </div>
+  </div>
+
+  <!-- The RRG scatter chart + table -->
+  <div class="lg:grid lg:grid-cols-[2fr_1fr] gap-4">
+
+    <div class="card p-4">
+      <canvas id="rrg" class="w-full" style="aspect-ratio: 1.1"></canvas>
+    </div>
+
+    <div class="card overflow-hidden">
+      <div class="card-header"><div class="card-title">Sector ranking</div></div>
+      <table class="jrnl">
+        <thead>
+          <tr>
+            <th>Sector</th>
+            <th class="text-right">RS-Ratio</th>
+            <th class="text-right">RS-Mom</th>
+            <th class="text-right">vs Mkt</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in points %}
+          <tr>
+            <td>
+              <span class="pill text-[10px] mr-1
+                {% if p.quadrant == 'Leading' %}bg-emerald-100 text-emerald-700 border-emerald-200
+                {% elif p.quadrant == 'Improving' %}bg-sky-100 text-sky-700 border-sky-200
+                {% elif p.quadrant == 'Weakening' %}bg-amber-100 text-amber-700 border-amber-200
+                {% else %}bg-rose-100 text-rose-700 border-rose-200{% endif %}">{{ p.quadrant[0] }}</span>
+              <span class="text-sm">{{ p.name }}</span>
+              <span class="text-[10px] text-zinc-400">({{ p.constituents }})</span>
+            </td>
+            <td class="text-right tabular-nums">{{ '%.1f'|format(p.rs_ratio) }}</td>
+            <td class="text-right tabular-nums">{{ '%.1f'|format(p.rs_momentum) }}</td>
+            <td class="text-right tabular-nums {% if p.relative_return_pct > 0 %}text-emerald-700{% elif p.relative_return_pct < 0 %}text-rose-700{% endif %}">
+              {{ '%+.1f'|format(p.relative_return_pct) }}%
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      // Per-quadrant colors mirroring the legend cards above.
+      const COLORS = {
+        Leading:   '#10b981',  // emerald-500
+        Improving: '#0ea5e9',  // sky-500
+        Weakening: '#f59e0b',  // amber-500
+        Lagging:   '#ef4444',  // rose-500
+      };
+
+      const points = {{ points_json | tojson }};
+
+      // Build one dataset per sector — each has `data` = the trail.
+      // Last point is the "current"; earlier points fade.
+      const datasets = points.map(p => {
+        const trail = p.trail.map(([x, y]) => ({ x, y }));
+        return {
+          label: p.name,
+          data: trail,
+          showLine: true,
+          borderColor: COLORS[p.quadrant] + '40',  // 25% alpha
+          borderWidth: 1.5,
+          pointBackgroundColor: trail.map((_, i) =>
+            i === trail.length - 1 ? COLORS[p.quadrant] : COLORS[p.quadrant] + '60'
+          ),
+          pointBorderColor: COLORS[p.quadrant],
+          pointRadius: trail.map((_, i) => i === trail.length - 1 ? 6 : 3),
+          pointHoverRadius: trail.map((_, i) => i === trail.length - 1 ? 8 : 4),
+          tension: 0.25,
+        };
+      });
+
+      // Quadrant background bands using Chart.js plugin.
+      const quadrantBg = {
+        id: 'quadrantBg',
+        beforeDraw(chart) {
+          const { ctx, chartArea: a, scales: { x, y } } = chart;
+          const cx = x.getPixelForValue(100);
+          const cy = y.getPixelForValue(100);
+          ctx.save();
+          // Improving (top-left) — sky
+          ctx.fillStyle = 'rgba(14,165,233,0.05)';
+          ctx.fillRect(a.left, a.top, cx - a.left, cy - a.top);
+          // Leading (top-right) — emerald
+          ctx.fillStyle = 'rgba(16,185,129,0.07)';
+          ctx.fillRect(cx, a.top, a.right - cx, cy - a.top);
+          // Lagging (bottom-left) — rose
+          ctx.fillStyle = 'rgba(239,68,68,0.06)';
+          ctx.fillRect(a.left, cy, cx - a.left, a.bottom - cy);
+          // Weakening (bottom-right) — amber
+          ctx.fillStyle = 'rgba(245,158,11,0.06)';
+          ctx.fillRect(cx, cy, a.right - cx, a.bottom - cy);
+          // Centre cross
+          ctx.strokeStyle = 'rgba(0,0,0,0.18)';
+          ctx.setLineDash([4, 4]);
+          ctx.beginPath();
+          ctx.moveTo(cx, a.top); ctx.lineTo(cx, a.bottom);
+          ctx.moveTo(a.left, cy); ctx.lineTo(a.right, cy);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          // Quadrant labels
+          ctx.fillStyle = 'rgba(0,0,0,0.4)';
+          ctx.font = 'bold 11px ui-sans-serif, system-ui';
+          ctx.fillText('IMPROVING', a.left + 8, a.top + 16);
+          ctx.fillText('LEADING',   a.right - 64, a.top + 16);
+          ctx.fillText('LAGGING',   a.left + 8, a.bottom - 8);
+          ctx.fillText('WEAKENING', a.right - 76, a.bottom - 8);
+          ctx.restore();
+        }
+      };
+
+      // Compute axis padding from data range so points aren't on edges.
+      const xs = points.flatMap(p => p.trail.map(([x, _]) => x));
+      const ys = points.flatMap(p => p.trail.map(([_, y]) => y));
+      const pad = 4;
+      const xMin = Math.min(94, ...xs) - pad;
+      const xMax = Math.max(106, ...xs) + pad;
+      const yMin = Math.min(94, ...ys) - pad;
+      const yMax = Math.max(106, ...ys) + pad;
+
+      const ctx = document.getElementById('rrg').getContext('2d');
+      new Chart(ctx, {
+        type: 'scatter',
+        data: { datasets },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                label(ctx) {
+                  // ctx.dataset.label = sector; ctx.parsed = {x,y}
+                  return `${ctx.dataset.label}: RS-R ${ctx.parsed.x.toFixed(1)}, RS-M ${ctx.parsed.y.toFixed(1)}`;
+                }
+              }
+            }
+          },
+          scales: {
+            x: { title: { display: true, text: 'JdK RS-Ratio (relative strength)' }, min: xMin, max: xMax },
+            y: { title: { display: true, text: 'JdK RS-Momentum' }, min: yMin, max: yMax },
+          }
+        },
+        plugins: [quadrantBg]
+      });
+
+      // Also: label the latest point of each sector with the sector name.
+      // Done manually after chart render via the afterDatasetsDraw hook.
+      Chart.register({
+        id: 'sectorLabels',
+        afterDatasetsDraw(chart) {
+          const ctx = chart.ctx;
+          ctx.font = '10px ui-sans-serif, system-ui';
+          ctx.fillStyle = '#27272a';
+          chart.data.datasets.forEach((ds, i) => {
+            const meta = chart.getDatasetMeta(i);
+            const last = meta.data[meta.data.length - 1];
+            if (!last) return;
+            // Truncate long sector names.
+            const name = ds.label.length > 22 ? ds.label.slice(0, 20) + '…' : ds.label;
+            ctx.fillText(name, last.x + 8, last.y + 3);
+          });
+        }
+      });
+    })();
+  </script>
+  {% endif %}
+</div>
+{% endblock %}
