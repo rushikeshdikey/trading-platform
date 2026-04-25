@@ -1,0 +1,22 @@
+{
+    email {$ACME_EMAIL}
+}
+
+{$APP_DOMAIN} {
+    encode zstd gzip
+
+    # Long-cache for fingerprinted/vendored static assets. /static/app.css will
+    # be replaced on each deploy via container rebuild, so cache by ETag.
+    @vendor path /static/vendor/*
+    header @vendor Cache-Control "public, max-age=31536000, immutable"
+
+    reverse_proxy app:8000 {
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-Host {host}
+    }
+
+    log {
+        output stdout
+        format json
+    }
+}

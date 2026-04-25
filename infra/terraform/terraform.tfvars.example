@@ -1,0 +1,16 @@
+# Copy to terraform.tfvars (gitignored) and fill in.
+# `terraform.tfvars` is loaded automatically by terraform.
+
+aws_region    = "ap-south-1"
+instance_type = "t4g.micro"
+
+# Lock SSH down to your home/office IP. Get it via:
+#   curl -s https://api.ipify.org
+# Note: SSM Session Manager works without SSH being open.
+admin_ip_cidr = "152.58.32.156/32"
+
+app_domain = "trading.zilionix.com"
+
+# Optional: name of an existing AWS key pair if you want SSH access in
+# addition to SSM. Leave empty to skip.
+key_pair_name = ""

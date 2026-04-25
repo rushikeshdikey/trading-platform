@@ -1,0 +1,68 @@
+# Production compose — runs on the EC2 instance via systemd. Local dev uses
+# `python run.py` against SQLite; this file is for the deployed VM.
+#
+# Required env (file `.env` in the same dir):
+#   POSTGRES_PASSWORD - strong random
+#   SECRET_KEY        - >=32 chars
+#   APP_DOMAIN        - e.g. trading.zilionix.com (Caddy uses this for TLS)
+#   ACME_EMAIL        - email Let's Encrypt uses for cert expiry warnings
+#   KITE_API_KEY / KITE_API_SECRET - optional, fallback for bootstrap admin
+#
+# Image is pulled from GHCR by tag (set via APP_IMAGE).
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tj
+      POSTGRES_DB: tj
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tj -d tj"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    image: ${APP_IMAGE:-ghcr.io/USERNAME/trading-journal:latest}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ENV: prod
+      SECRET_KEY: ${SECRET_KEY}
+      DATABASE_URL: postgresql+psycopg://tj:${POSTGRES_PASSWORD}@postgres:5432/tj
+      KITE_API_KEY: ${KITE_API_KEY:-}
+      KITE_API_SECRET: ${KITE_API_SECRET:-}
+      KITE_REDIRECT_URL: ${KITE_REDIRECT_URL:-https://trading.zilionix.com/auth/zerodha/callback}
+    volumes:
+      # App-level data (cached parquet, scanner artifacts) — separate from DB.
+      - appdata:/app/data
+    expose:
+      - "8000"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+
+volumes:
+  pgdata:
+  appdata:
+  caddydata:
+  caddyconfig:
