@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}404 · Trading Journal{% endblock %}
+{% block content %}
+<div class="max-w-2xl mx-auto py-12 md:py-20 px-4">
+  <div class="card p-8 md:p-10 text-center">
+    <div class="inline-flex items-center justify-center w-14 h-14 rounded-full bg-rose-50 border border-rose-200 mb-5">
+      <i data-lucide="trending-down" class="w-7 h-7 text-rose-600"></i>
+    </div>
+
+    <div class="text-[11px] font-semibold uppercase tracking-widest text-rose-600 mb-1">Stop loss hit</div>
+    <h1 class="text-3xl md:text-4xl font-semibold tracking-tight mb-2">404 — Setup not found</h1>
+    <p class="text-zinc-600 text-sm md:text-base mb-2">
+      This chart isn't on the screener. Either the URL was mistyped, the page was renamed, or you're scanning a ticker that doesn't trade here.
+    </p>
+    {% if path %}
+    <p class="text-xs text-zinc-400 font-mono mb-6 break-all">{{ path }}</p>
+    {% endif %}
+
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-2 mt-6">
+      <a href="/cockpit" class="btn btn-outline justify-center">
+        <i data-lucide="layout-dashboard"></i>Cockpit
+      </a>
+      <a href="/trades" class="btn btn-outline justify-center">
+        <i data-lucide="list"></i>Trades
+      </a>
+      <a href="/scanners" class="btn btn-outline justify-center">
+        <i data-lucide="radar"></i>Scanners
+      </a>
+      <a href="/watchlist" class="btn btn-outline justify-center">
+        <i data-lucide="bookmark"></i>Watchlist
+      </a>
+    </div>
+
+    <div class="mt-6 pt-6 border-t border-zinc-100 text-xs text-zinc-500">
+      Trade plan: cut the loss, re-enter on the right side of the trend.
+    </div>
+  </div>
+</div>
+{% endblock %}

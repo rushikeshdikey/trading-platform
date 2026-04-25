@@ -46,13 +46,21 @@ def _bars_cache_size(db: Session) -> dict:
 
 @router.get("", response_class=HTMLResponse)
 def scanners_home(request: Request, db: Session = Depends(get_db)):
+    from ..scanner import index_universe as idx_uni
+
     last_runs = scanner_runner.last_run_summary(db)
     cache = _bars_cache_size(db)
-    mcap_cache = fundamentals_svc.cache_stats(db)
 
-    # Read SHARED ScanCache for unified results. If all 4 are present, render
-    # the unified table immediately. Otherwise the page just shows the
-    # individual-scan cards and "Run all" button.
+    # Universe = NSE Total Market index ∪ liquid non-index names with bars.
+    # See _load_universe_and_bars in runner.py for the rules.
+    try:
+        universe_breakdown = scanner_runner.gated_universe_breakdown(db)
+    except Exception:  # noqa: BLE001
+        universe_breakdown = {"total": 0, "in_index": 0, "soft_included": 0}
+    idx_count = universe_breakdown["total"]
+    nse_status = idx_uni.status()
+
+    # Read SHARED ScanCache for unified results.
     unified = _build_unified_results(db)
     capital = dash_svc.current_capital(db) if unified else 0.0
 
@@ -63,7 +71,10 @@ def scanners_home(request: Request, db: Session = Depends(get_db)):
             "scan_types": [{"key": k, "label": v[0]} for k, v in SCAN_TYPES.items()],
             "last_runs": last_runs,
             "cache": cache,
-            "mcap_cache": mcap_cache,
+            "idx_count": idx_count,
+            "universe_breakdown": universe_breakdown,
+            "nse_status": nse_status,
+            "mcap_cache": fundamentals_svc.cache_stats(db),
             "mcap_refresh_status": fundamentals_svc.refresh_status(),
             "mcap_min_rs": fundamentals_svc.MIN_MARKET_CAP_RS,
             "results": None,
@@ -202,6 +213,23 @@ def refresh_fundamentals(
     return RedirectResponse(url=f"/scanners?refresh_fund={msg}", status_code=303)
 
 
+@router.post("/refresh-index-universe", response_class=HTMLResponse)
+def refresh_index_universe(request: Request):
+    """Force-refresh the NSE Total Market constituent list. Cheap (one HTTP
+    call, ~30 KB), so this is sync. The page reload will show the new count."""
+    from ..scanner import index_universe as idx_uni
+    try:
+        rows = idx_uni.get_constituents(force_refresh=True)
+        return RedirectResponse(
+            url=f"/scanners?idx_refresh={len(rows)}", status_code=303,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return RedirectResponse(
+            url=f"/scanners?error=index+refresh+failed:+{type(exc).__name__}",
+            status_code=303,
+        )
+
+
 @router.post("/refresh-bars", response_class=HTMLResponse)
 def refresh_bars(request: Request, db: Session = Depends(get_db)):
     """Synchronous bhavcopy refresh. First run pulls 180 calendar days."""
@@ -251,6 +279,11 @@ def run_scan(
     last_runs = scanner_runner.last_run_summary(db)
     cache = _bars_cache_size(db)
     mcap_cache = fundamentals_svc.cache_stats(db)
+    try:
+        universe_breakdown = scanner_runner.gated_universe_breakdown(db)
+    except Exception:  # noqa: BLE001
+        universe_breakdown = {"total": 0, "in_index": 0, "soft_included": 0}
+    idx_count = universe_breakdown["total"]
     scan_label = SCAN_TYPES[scan_type][0]
     capital = dash_svc.current_capital(db)
     default_risk = app_settings.get_float(db, "default_risk_pct", 0.005)
@@ -264,6 +297,8 @@ def run_scan(
             ],
             "last_runs": last_runs,
             "cache": cache,
+            "idx_count": idx_count,
+            "universe_breakdown": universe_breakdown,
             "mcap_cache": mcap_cache,
             "mcap_refresh_status": fundamentals_svc.refresh_status(),
             "mcap_min_rs": fundamentals_svc.MIN_MARKET_CAP_RS,

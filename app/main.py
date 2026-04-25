@@ -4,6 +4,7 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import jobs as jobs_mod
@@ -42,6 +43,21 @@ app = FastAPI(title="Trading Journal")
 @app.exception_handler(_RedirectToLogin)
 async def _redirect_to_login(_request: Request, exc: _RedirectToLogin):
     return login_redirect_response(exc.detail)
+
+
+@app.exception_handler(StarletteHTTPException)
+async def _http_exception_handler(request: Request, exc: StarletteHTTPException):
+    """Render a trader-themed 404 for missing routes / resources. Delegates
+    every other status to Starlette's default plain-text response."""
+    if exc.status_code == 404:
+        from .deps import templates
+        return templates.TemplateResponse(
+            request, "404.html",
+            {"path": request.url.path},
+            status_code=404,
+        )
+    from starlette.responses import PlainTextResponse
+    return PlainTextResponse(exc.detail or "Error", status_code=exc.status_code)
 
 
 # Order matters: middlewares run in REVERSE order of registration. The LAST

@@ -8,7 +8,7 @@
     <div>
       <h1 class="text-2xl font-semibold tracking-tight">Scanners</h1>
       <p class="text-zinc-500 text-sm mt-1 max-w-3xl">
-        EOD swing setups across NSE + BSE, gated to market cap ≥ ₹{{ '{:,.0f}'.format(mcap_min_rs / 10000000) }} Cr.
+        EOD swing setups across the Nifty Total Market index plus liquid non-index names with bars.
         Auto-refreshed at 15:35 IST every weekday.
       </p>
     </div>
@@ -16,7 +16,7 @@
       <form method="post" action="/scanners/run-all" class="inline">
         <button class="btn btn-primary"
                 {% if cache.rows == 0 %}disabled title="Refresh bars first"
-                {% elif mcap_cache.above_threshold == 0 %}disabled title="Refresh fundamentals first"{% endif %}>
+                {% elif idx_count == 0 %}disabled title="Refresh universe first"{% endif %}>
           <i data-lucide="play"></i>Run all live
         </button>
       </form>
@@ -32,7 +32,7 @@
   {% if rf_err %}<div class="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-sm"><strong>Market-cap refresh error:</strong> {{ rf_err }}</div>{% endif %}
   {% if err %}<div class="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-sm"><strong>Scan error:</strong> {{ err }}</div>{% endif %}
 
-  <!-- Compact status strip — replaces the giant cache cards -->
+  <!-- Compact status strip — bars + NSE index universe + refresh actions -->
   <div class="card px-4 py-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs">
     <span class="flex items-center gap-1.5">
       <i data-lucide="database" class="w-3.5 h-3.5 text-zinc-400"></i>
@@ -43,24 +43,21 @@
     <span class="text-zinc-300">·</span>
     <span class="flex items-center gap-1.5">
       <i data-lucide="filter" class="w-3.5 h-3.5 text-zinc-400"></i>
-      <span class="text-zinc-500">Mcap-filtered universe</span>
-      <span class="font-semibold tabular-nums">{{ mcap_cache.above_threshold }}</span>
-      {% if mcap_cache.failed %}<span class="text-rose-600 tabular-nums">({{ mcap_cache.failed }} failed)</span>{% endif %}
+      <span class="text-zinc-500">Scan universe</span>
+      <span class="font-semibold tabular-nums">{{ idx_count }}</span>
+      {% if universe_breakdown %}<span class="text-zinc-400 text-[10px]" title="Nifty Total Market index ∪ liquid non-index names with bars">({{ universe_breakdown.in_index }} index + {{ universe_breakdown.soft_included }} liquid)</span>{% endif %}
     </span>
     <span class="ml-auto flex items-center gap-2">
       <form method="post" action="/scanners/refresh-bars" class="inline">
         <button class="btn btn-outline !py-1 !px-2 text-[11px]"><i data-lucide="refresh-cw"></i>Refresh bars</button>
       </form>
-      <form method="post" action="/scanners/refresh-fundamentals" class="inline">
-        <button class="btn btn-outline !py-1 !px-2 text-[11px]" {% if mcap_refresh_status.running %}disabled{% endif %}>
-          <i data-lucide="refresh-cw" {% if mcap_refresh_status.running %}class="animate-spin"{% endif %}></i>
-          {% if mcap_refresh_status.running %}Refreshing fundamentals…{% else %}Refresh fundamentals{% endif %}
-        </button>
+      <form method="post" action="/scanners/refresh-index-universe" class="inline">
+        <button class="btn btn-outline !py-1 !px-2 text-[11px]"><i data-lucide="refresh-cw"></i>Refresh universe</button>
       </form>
     </span>
   </div>
   {% if cache.rows == 0 %}<div class="text-xs text-amber-700 bg-amber-50 border border-amber-200 px-3 py-2 rounded">Cold start: first <strong>Refresh bars</strong> pulls ~180 days for both exchanges (slow).</div>{% endif %}
-  {% if mcap_cache.above_threshold == 0 %}<div class="text-xs text-amber-700 bg-amber-50 border border-amber-200 px-3 py-2 rounded">No symbols qualify yet — scans will return empty. Click <strong>Refresh fundamentals</strong>.</div>{% endif %}
+  {% if idx_count == 0 %}<div class="text-xs text-amber-700 bg-amber-50 border border-amber-200 px-3 py-2 rounded">NSE universe not loaded yet — click <strong>Refresh universe</strong> (one HTTP call, &lt;1s).</div>{% endif %}
 
   {# ====================== UNIFIED RESULTS (cached) ===================== #}
   {% if unified %}
@@ -477,7 +474,7 @@
           </div>
           <button class="btn btn-primary"
                   {% if cache.rows == 0 %}disabled title="Refresh bars first"
-                  {% elif mcap_cache.above_threshold == 0 %}disabled title="Refresh fundamentals first"
+                  {% elif idx_count == 0 %}disabled title="Refresh universe first"
                   {% endif %}>
             <i data-lucide="play"></i>Run
           </button>
