@@ -6,6 +6,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
+from . import jobs as jobs_mod
 from . import prices
 from . import orm_events  # noqa: F401  -- side-effect: registers SQLAlchemy events
 from .auth import _RedirectToLogin, login_redirect_response, require_user
@@ -107,6 +108,7 @@ app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 # Masterlist defaults are now seeded per-user (in /setup and admin user
 # creation) instead of at boot — there's no global "current user" at boot.
 prices.start_background_refresher()
+jobs_mod.start()  # APScheduler — daily EOD pre-warm at 15:35 IST
 
 
 @app.get("/api/status")

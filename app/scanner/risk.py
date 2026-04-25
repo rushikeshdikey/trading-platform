@@ -26,8 +26,12 @@ RISK_PCT_CONSERVATIVE = 0.0025   # 0.25%
 RISK_PCT_STANDARD = 0.005        # 0.50%
 
 
-def size_candidate(db: Session, c: Candidate) -> dict:
+def size_candidate(db: Session, c: Candidate, capital: float | None = None) -> dict:
     """Return a dict of risk-sized fields at both tiers, keyed for the UI.
+
+    Pass ``capital`` from the caller when sizing many candidates in a batch
+    (e.g. /scanners) — computing it walks the entire trade history. Default
+    None → fetch on demand (per-call O(N) trades, fine for one-off uses).
 
     Keys:
       capital                 — live capital (starting + realised P&L + events)
@@ -37,7 +41,8 @@ def size_candidate(db: Session, c: Candidate) -> dict:
       position_size_rs_high   — allocation at the 0.5% tier (for display)
       allocation_pct_high     — same as ratio of capital
     """
-    capital = dash_svc.current_capital(db)
+    if capital is None:
+        capital = dash_svc.current_capital(db)
     low = calc.size_by_risk(capital, RISK_PCT_CONSERVATIVE, c.suggested_entry, c.suggested_sl)
     high = calc.size_by_risk(capital, RISK_PCT_STANDARD, c.suggested_entry, c.suggested_sl)
     return {

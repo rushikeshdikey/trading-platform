@@ -49,13 +49,18 @@ def scanners_home(request: Request, db: Session = Depends(get_db)):
     last_runs = scanner_runner.last_run_summary(db)
     cache = _bars_cache_size(db)
     mcap_cache = fundamentals_svc.cache_stats(db)
+
+    # Read SHARED ScanCache for unified results. If all 4 are present, render
+    # the unified table immediately. Otherwise the page just shows the
+    # individual-scan cards and "Run all" button.
+    unified = _build_unified_results(db)
+    capital = dash_svc.current_capital(db) if unified else 0.0
+
     return templates.TemplateResponse(
         request,
         "scanners.html",
         {
-            "scan_types": [
-                {"key": k, "label": v[0]} for k, v in SCAN_TYPES.items()
-            ],
+            "scan_types": [{"key": k, "label": v[0]} for k, v in SCAN_TYPES.items()],
             "last_runs": last_runs,
             "cache": cache,
             "mcap_cache": mcap_cache,
@@ -63,8 +68,108 @@ def scanners_home(request: Request, db: Session = Depends(get_db)):
             "mcap_min_rs": fundamentals_svc.MIN_MARKET_CAP_RS,
             "results": None,
             "selected_scan": None,
+            "unified": unified,
+            "capital": capital,
         },
     )
+
+
+def _build_unified_results(db: Session) -> dict | None:
+    """Read ScanCache for all 4 scans and build a unified row list keyed by
+    symbol — symbols hitting multiple scans get pills for each."""
+    cached = scanner_runner.latest_cached_all(db, max_age_minutes=24 * 60)
+    if cached is None:
+        return None
+    results, rows = cached
+
+    # Watchlist for the "already watching" badge.
+    all_symbols = {c.symbol for cands in results.values() for c in cands}
+    on_watchlist: set[str] = set()
+    if all_symbols:
+        on_watchlist = {
+            s for (s,) in db.query(Watchlist.symbol)
+            .filter(Watchlist.symbol.in_(all_symbols))
+            .all()
+        }
+
+    # Group by symbol: dict[symbol] -> {symbol, scans:[(type,label,score)],
+    # max_score, primary_candidate (highest-score), sizing, on_watchlist}.
+    from ..scanner.risk import size_candidate as _size_one
+
+    grouped: dict[str, dict] = {}
+    for scan_type, candidates in results.items():
+        label = SCAN_TYPES[scan_type][0]
+        for c in candidates:
+            slot = grouped.setdefault(c.symbol, {
+                "symbol": c.symbol,
+                "scans": [],
+                "primary": None,
+                "max_score": 0.0,
+            })
+            slot["scans"].append({
+                "type": scan_type, "label": label, "score": c.score,
+                "extras": c.extras,
+            })
+            if c.score > slot["max_score"]:
+                slot["max_score"] = c.score
+                slot["primary"] = c
+
+    # Compute capital ONCE — current_capital walks the whole trade history
+    # and was previously called per row.
+    capital = dash_svc.current_capital(db)
+
+    out_rows = []
+    for sym, slot in grouped.items():
+        c = slot["primary"]
+        sizing = _size_one(db, c, capital=capital)
+        out_rows.append({
+            "symbol": sym,
+            "scans": sorted(slot["scans"], key=lambda s: s["score"], reverse=True),
+            "scan_count": len(slot["scans"]),
+            "primary": c,
+            "sizing": sizing,
+            "on_watchlist": sym in on_watchlist,
+            # Conviction tier: 2+ scans = A+, single scan A if score >= 60, else B
+            "tier": (
+                "A+" if len(slot["scans"]) >= 2
+                else ("A" if c.score >= 60 else "B")
+            ),
+        })
+    out_rows.sort(key=lambda r: (r["scan_count"], r["primary"].score), reverse=True)
+
+    # Meta — pick the oldest run_at across the 4 scans as the "cache age".
+    oldest_run_at = min(rows[st].run_at for st in rows)
+    universe_size = max((rows[st].universe_size for st in rows), default=0)
+    total_elapsed = sum(rows[st].elapsed_ms for st in rows)
+
+    return {
+        "rows": out_rows,
+        "scan_runs": rows,           # dict[scan_type] -> ScanCache row
+        "oldest_run_at": oldest_run_at,
+        "universe_size": universe_size,
+        "total_elapsed_ms": total_elapsed,
+        "scan_summary": {
+            scan_type: {
+                "label": SCAN_TYPES[scan_type][0],
+                "count": rows[scan_type].candidates_count,
+                "elapsed_ms": rows[scan_type].elapsed_ms,
+            }
+            for scan_type in rows
+        },
+    }
+
+
+@router.post("/run-all", response_class=HTMLResponse)
+def run_all(request: Request, db: Session = Depends(get_db)):
+    """Live re-run of all 4 scanners in parallel. Results land in ScanCache
+    and are visible to every user. Use this when you want fresher data than
+    the EOD pre-warm cache."""
+    try:
+        scanner_runner.run_all_scans(db, persist=True)
+    except Exception as exc:  # noqa: BLE001
+        log.exception("run-all failed")
+        return RedirectResponse(url=f"/scanners?error={exc}", status_code=303)
+    return RedirectResponse(url="/scanners", status_code=303)
 
 
 @router.post("/refresh-fundamentals", response_class=HTMLResponse)

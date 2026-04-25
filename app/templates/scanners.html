@@ -2,93 +2,244 @@
 {% block title %}Scanners · Trading Journal{% endblock %}
 {% block content %}
 <div class="max-w-7xl mx-auto space-y-6">
-  <div>
-    <h1 class="text-2xl font-bold">Scanners</h1>
-    <p class="text-zinc-500 text-sm mt-1">
-      EOD swing setups across NSE + BSE equities, gated to market cap ≥ ₹900 Cr.
-      Pattern parameters are hardcoded and tuned for a 180-bar lookback.
-      Every result is risk-sized against your current capital so position size is never eyeballed.
-    </p>
+
+  <!-- Title + primary action -->
+  <div class="flex items-start justify-between flex-wrap gap-3">
+    <div>
+      <h1 class="text-2xl font-semibold tracking-tight">Scanners</h1>
+      <p class="text-zinc-500 text-sm mt-1 max-w-3xl">
+        EOD swing setups across NSE + BSE, gated to market cap ≥ ₹{{ '{:,.0f}'.format(mcap_min_rs / 10000000) }} Cr.
+        Auto-refreshed at 15:35 IST every weekday.
+      </p>
+    </div>
+    <div class="flex items-center gap-2">
+      <form method="post" action="/scanners/run-all" class="inline">
+        <button class="btn btn-primary"
+                {% if cache.rows == 0 %}disabled title="Refresh bars first"
+                {% elif mcap_cache.above_threshold == 0 %}disabled title="Refresh fundamentals first"{% endif %}>
+          <i data-lucide="play"></i>Run all live
+        </button>
+      </form>
+    </div>
   </div>
 
   {% set refresh = request.query_params.get('refresh') %}
   {% set err = request.query_params.get('error') %}
   {% set rf = request.query_params.get('refresh_fund') %}
   {% set rf_err = request.query_params.get('refresh_fund_error') %}
-  {% if refresh %}
-    <div class="p-3 rounded-lg bg-sky-50 border border-sky-200 text-sky-800 text-sm">
-      <strong>Bars cache refreshed:</strong> <span class="tabular-nums">{{ refresh }}</span>
-    </div>
-  {% endif %}
-  {% if rf %}
-    <div class="p-3 rounded-lg bg-sky-50 border border-sky-200 text-sky-800 text-sm">
-      <strong>Market-cap refresh:</strong> {{ rf }} (running in background — reload to see progress)
-    </div>
-  {% endif %}
-  {% if rf_err %}
-    <div class="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-sm">
-      <strong>Market-cap refresh error:</strong> {{ rf_err }}
-    </div>
-  {% endif %}
-  {% if err %}
-    <div class="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-sm">
-      <strong>Scan error:</strong> {{ err }}
-    </div>
-  {% endif %}
+  {% if refresh %}<div class="p-3 rounded-lg bg-sky-50 border border-sky-200 text-sky-800 text-sm"><strong>Bars cache refreshed:</strong> <span class="tabular-nums">{{ refresh }}</span></div>{% endif %}
+  {% if rf %}<div class="p-3 rounded-lg bg-sky-50 border border-sky-200 text-sky-800 text-sm"><strong>Market-cap refresh:</strong> {{ rf }} (running in background — reload to see progress)</div>{% endif %}
+  {% if rf_err %}<div class="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-sm"><strong>Market-cap refresh error:</strong> {{ rf_err }}</div>{% endif %}
+  {% if err %}<div class="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-sm"><strong>Scan error:</strong> {{ err }}</div>{% endif %}
 
-  <!-- Cache status: bars + market caps -->
-  <div class="grid md:grid-cols-2 gap-4">
-    <div class="card p-4">
-      <div class="flex items-center justify-between mb-2">
-        <div class="text-xs uppercase tracking-wide text-zinc-500 font-semibold">Bars cache (NSE + BSE)</div>
-        <form method="post" action="/scanners/refresh-bars" class="inline">
-          <button class="btn btn-outline !py-1 !px-2 text-xs" title="Download latest bhavcopies">
-            <i data-lucide="refresh-cw"></i>Refresh
+  <!-- Compact status strip — replaces the giant cache cards -->
+  <div class="card px-4 py-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs">
+    <span class="flex items-center gap-1.5">
+      <i data-lucide="database" class="w-3.5 h-3.5 text-zinc-400"></i>
+      <span class="text-zinc-500">Bars</span>
+      <span class="font-semibold tabular-nums">{{ '{:,}'.format(cache.rows) }}</span>
+      <span class="text-zinc-400">/ {{ cache.symbols }} symbols / {{ cache.latest_date or '—' }}</span>
+    </span>
+    <span class="text-zinc-300">·</span>
+    <span class="flex items-center gap-1.5">
+      <i data-lucide="filter" class="w-3.5 h-3.5 text-zinc-400"></i>
+      <span class="text-zinc-500">Mcap-filtered universe</span>
+      <span class="font-semibold tabular-nums">{{ mcap_cache.above_threshold }}</span>
+      {% if mcap_cache.failed %}<span class="text-rose-600 tabular-nums">({{ mcap_cache.failed }} failed)</span>{% endif %}
+    </span>
+    <span class="ml-auto flex items-center gap-2">
+      <form method="post" action="/scanners/refresh-bars" class="inline">
+        <button class="btn btn-outline !py-1 !px-2 text-[11px]"><i data-lucide="refresh-cw"></i>Refresh bars</button>
+      </form>
+      <form method="post" action="/scanners/refresh-fundamentals" class="inline">
+        <button class="btn btn-outline !py-1 !px-2 text-[11px]" {% if mcap_refresh_status.running %}disabled{% endif %}>
+          <i data-lucide="refresh-cw" {% if mcap_refresh_status.running %}class="animate-spin"{% endif %}></i>
+          {% if mcap_refresh_status.running %}Refreshing fundamentals…{% else %}Refresh fundamentals{% endif %}
+        </button>
+      </form>
+    </span>
+  </div>
+  {% if cache.rows == 0 %}<div class="text-xs text-amber-700 bg-amber-50 border border-amber-200 px-3 py-2 rounded">Cold start: first <strong>Refresh bars</strong> pulls ~180 days for both exchanges (slow).</div>{% endif %}
+  {% if mcap_cache.above_threshold == 0 %}<div class="text-xs text-amber-700 bg-amber-50 border border-amber-200 px-3 py-2 rounded">No symbols qualify yet — scans will return empty. Click <strong>Refresh fundamentals</strong>.</div>{% endif %}
+
+  {# ====================== UNIFIED RESULTS (cached) ===================== #}
+  {% if unified %}
+  <div class="card"
+       x-data='scannerSelect({{ unified.rows|map(attribute="symbol")|list|tojson }}, "Multi-scan")'>
+    <div class="card-header flex items-center justify-between flex-wrap gap-3">
+      <div>
+        <div class="card-title flex items-center gap-2">
+          <i data-lucide="target" class="w-4 h-4 text-zinc-500"></i>
+          {{ unified.rows|length }} candidates across all 4 scanners
+        </div>
+        <div class="card-description flex flex-wrap gap-x-3">
+          <span>Universe {{ unified.universe_size }}</span>
+          <span>Cached at {{ unified.oldest_run_at.strftime('%H:%M') }} IST today · live re-run took {{ unified.total_elapsed_ms }}ms total</span>
+          <span class="text-emerald-700">Loaded from cache · &lt; 50ms</span>
+        </div>
+      </div>
+
+      {% if unified.rows %}
+      <!-- Bulk action bar -->
+      <div class="flex items-center gap-2">
+        <div class="inline-flex rounded-md border border-zinc-200 overflow-hidden text-xs">
+          <button type="button" @click="exchange = 'NSE'" :class="exchange === 'NSE' ? 'bg-zinc-900 text-white' : 'bg-white hover:bg-zinc-50'" class="px-2.5 py-1 font-semibold">NSE</button>
+          <button type="button" @click="exchange = 'BSE'" :class="exchange === 'BSE' ? 'bg-zinc-900 text-white' : 'bg-white hover:bg-zinc-50'" class="px-2.5 py-1 font-semibold">BSE</button>
+        </div>
+        <span class="text-xs px-2.5 py-1 rounded-md font-semibold tabular-nums"
+              :class="selected.size > 0 ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : 'bg-zinc-100 text-zinc-500 border border-zinc-200'">
+          <span x-text="selected.size"></span> selected
+        </span>
+        <div class="relative" x-data="{ open: false }" @click.away="open = false">
+          <button type="button" :disabled="selected.size === 0" @click="open = !open"
+                  class="btn btn-primary !py-1.5 !px-3 text-xs"
+                  :class="selected.size === 0 ? 'opacity-50 cursor-not-allowed' : ''">
+            <i data-lucide="external-link"></i>Export to TradingView<i data-lucide="chevron-down" class="!w-3 !h-3 opacity-70"></i>
+          </button>
+          <div x-show="open" x-transition.opacity.duration.100ms x-cloak
+               class="absolute right-0 mt-1 w-60 bg-white border border-zinc-200 rounded-lg shadow-md py-1 text-sm z-40">
+            <button type="button" @click="copyAll(); open = false" class="w-full text-left flex items-center gap-2 px-3 py-2 hover:bg-zinc-100">
+              <i data-lucide="copy" class="w-4 h-4"></i>Copy all
+              <span class="ml-auto text-[11px] text-zinc-400 tabular-nums" x-text="selected.size"></span>
+            </button>
+            <div class="border-t border-zinc-100 my-1"></div>
+            <button type="button" @click="copyBatch(30); open = false" :disabled="selected.size <= 30"
+                    :class="selected.size <= 30 ? 'opacity-40 cursor-not-allowed' : 'hover:bg-zinc-100'"
+                    class="w-full text-left flex items-center gap-2 px-3 py-2">
+              <i data-lucide="layers" class="w-4 h-4"></i>Copy in batches of 30
+              <span class="ml-auto text-[11px] text-zinc-400 tabular-nums" x-text="batchInfo(30)"></span>
+            </button>
+            <button type="button" @click="copyBatch(100); open = false" :disabled="selected.size <= 100"
+                    :class="selected.size <= 100 ? 'opacity-40 cursor-not-allowed' : 'hover:bg-zinc-100'"
+                    class="w-full text-left flex items-center gap-2 px-3 py-2">
+              <i data-lucide="layers" class="w-4 h-4"></i>Copy in batches of 100
+              <span class="ml-auto text-[11px] text-zinc-400 tabular-nums" x-text="batchInfo(100)"></span>
+            </button>
+            <div x-show="batchSize > 0" class="border-t border-zinc-100 my-1"></div>
+            <button type="button" x-show="batchSize > 0" @click="copyNextBatch(); open = false"
+                    class="w-full text-left flex items-center gap-2 px-3 py-2 hover:bg-zinc-100 text-emerald-700 font-medium">
+              <i data-lucide="arrow-right" class="w-4 h-4"></i>Copy batch <span x-text="batchIdx + 1"></span> of <span x-text="Math.ceil(selected.size / batchSize)"></span>
+            </button>
+          </div>
+        </div>
+        <form method="post" action="/watchlist/bulk-add" @submit="if(selected.size === 0)$event.preventDefault()">
+          <input type="hidden" name="symbols" :value="Array.from(selected).join(',')">
+          <input type="hidden" name="setup_label" value="Multi-scan">
+          <input type="hidden" name="return_to" value="/scanners">
+          <button type="submit" :disabled="selected.size === 0"
+                  class="btn btn-outline !py-1.5 !px-3 text-xs"
+                  :class="selected.size === 0 ? 'opacity-50 cursor-not-allowed' : ''">
+            <i data-lucide="bookmark-plus"></i>Add to watchlist
           </button>
         </form>
+        <div x-show="toast" x-transition.opacity x-cloak
+             class="fixed bottom-6 right-6 bg-zinc-900 text-white px-4 py-3 rounded-lg shadow-lg text-sm z-50">
+          <span x-text="toast"></span>
+        </div>
       </div>
-      <div class="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm">
-        <div><span class="metric-label">Rows</span><div class="font-semibold tabular-nums">{{ cache.rows }}</div></div>
-        <div><span class="metric-label">Symbols</span><div class="font-semibold tabular-nums">{{ cache.symbols }}</div></div>
-        <div><span class="metric-label">Latest</span><div class="font-semibold tabular-nums">{{ cache.latest_date or '—' }}</div></div>
-      </div>
-      {% if cache.rows == 0 %}
-        <div class="mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1 rounded">Cold start: first refresh pulls ~180 days for both exchanges (slow).</div>
       {% endif %}
     </div>
 
-    <div class="card p-4">
-      <div class="flex items-center justify-between mb-2">
-        <div class="text-xs uppercase tracking-wide text-zinc-500 font-semibold">Market-cap filter ≥ ₹{{ '{:,.0f}'.format(mcap_min_rs / 10000000) }} Cr</div>
-        <form method="post" action="/scanners/refresh-fundamentals" class="inline">
-          <button class="btn btn-outline !py-1 !px-2 text-xs"
-                  {% if mcap_refresh_status.running %}disabled{% endif %}
-                  title="Pulls market caps from yfinance for the current universe — 5-10 min cold start">
-            <i data-lucide="refresh-cw" {% if mcap_refresh_status.running %}class="animate-spin"{% endif %}></i>
-            {% if mcap_refresh_status.running %}Refreshing…{% else %}Refresh fundamentals{% endif %}
-          </button>
-        </form>
-      </div>
-      <div class="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm">
-        <div><span class="metric-label">Cached</span><div class="font-semibold tabular-nums">{{ mcap_cache.with_mcap }} / {{ mcap_cache.total }}</div></div>
-        <div><span class="metric-label">Above threshold</span><div class="font-semibold tabular-nums">{{ mcap_cache.above_threshold }}</div></div>
-        <div><span class="metric-label">Failed</span><div class="font-semibold tabular-nums {{ 'text-rose-600' if mcap_cache.failed else '' }}">{{ mcap_cache.failed }}</div></div>
-        <div><span class="metric-label">Last refresh</span><div class="font-semibold tabular-nums text-xs">{{ mcap_cache.last_refresh[:16] if mcap_cache.last_refresh else '—' }}</div></div>
-      </div>
-      {% if mcap_cache.above_threshold == 0 %}
-        <div class="mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1 rounded">
-          No symbols qualify yet — scans will return empty. Click <strong>Refresh fundamentals</strong>.
-        </div>
-      {% elif mcap_cache.failed %}
-        <div class="mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1 rounded">
-          {{ mcap_cache.failed }} symbols failed (usually yfinance rate limit). Click <strong>Refresh fundamentals</strong> again — failed rows are retried on every run.
-        </div>
-      {% endif %}
+    {% if not unified.rows %}
+    <div class="p-6 text-sm text-zinc-500">No candidates today across any scanner. Markets change — check back tomorrow.</div>
+    {% else %}
+    <!-- Per-scan summary chips -->
+    <div class="px-6 py-3 border-b border-zinc-100 flex flex-wrap gap-2 text-xs">
+      {% for st_key, summary in unified.scan_summary.items() %}
+      <span class="pill {% if summary.count > 0 %}bg-emerald-50 text-emerald-700 border-emerald-200{% else %}bg-zinc-50 text-zinc-500 border-zinc-200{% endif %} font-medium">
+        {{ summary.label }} · <span class="font-bold">{{ summary.count }}</span> · {{ summary.elapsed_ms }}ms
+      </span>
+      {% endfor %}
     </div>
+
+    <div class="overflow-x-auto">
+      <table class="jrnl">
+        <thead>
+          <tr>
+            <th class="!w-8">
+              <input type="checkbox" @change="toggleAll($event.target.checked)" :checked="allSelected()" class="rounded border-zinc-300">
+            </th>
+            <th>Tier</th>
+            <th>Symbol</th>
+            <th>Setups</th>
+            <th>Score</th>
+            <th>Close</th>
+            <th>Entry</th>
+            <th>SL</th>
+            <th>Qty 0.25 / 0.5</th>
+            <th>Risk ₹</th>
+            <th class="text-right">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in unified.rows %}
+          {% set c = row.primary %}
+          {% set s = row.sizing %}
+          <tr :class="selected.has('{{ c.symbol }}') ? 'bg-emerald-50/40' : ''">
+            <td><input type="checkbox" :checked="selected.has('{{ c.symbol }}')" @change="toggle('{{ c.symbol }}')" class="rounded border-zinc-300"></td>
+            <td>
+              <span class="pill text-xs font-bold border
+                {% if row.tier == 'A+' %}bg-emerald-100 text-emerald-800 border-emerald-300
+                {% elif row.tier == 'A' %}bg-emerald-50 text-emerald-700 border-emerald-200
+                {% else %}bg-zinc-100 text-zinc-700 border-zinc-200{% endif %}">{{ row.tier }}</span>
+            </td>
+            <td class="font-semibold">{{ c.symbol }}</td>
+            <td>
+              <div class="flex flex-wrap gap-1">
+                {% for sc in row.scans %}
+                  <span class="pill text-[10px] bg-sky-50 text-sky-700 border-sky-200 font-medium" title="Score {{ '{:.1f}'.format(sc.score) }}">
+                    {{ sc.label }}
+                  </span>
+                {% endfor %}
+              </div>
+            </td>
+            <td class="tabular-nums font-semibold">{{ '{:.0f}'.format(c.score) }}</td>
+            <td class="tabular-nums">₹{{ '{:,.2f}'.format(c.close) }}</td>
+            <td class="tabular-nums font-semibold">₹{{ '{:,.2f}'.format(c.suggested_entry) }}</td>
+            <td class="tabular-nums text-rose-700">₹{{ '{:,.2f}'.format(c.suggested_sl) }}</td>
+            <td class="tabular-nums"><span class="text-zinc-500">{{ s.qty_low }}</span> / <span class="font-semibold">{{ s.qty_high }}</span></td>
+            <td class="tabular-nums text-xs"><span class="text-zinc-500">₹{{ '{:,.0f}'.format(s.risk_rs_low) }}</span> / <span class="font-semibold">₹{{ '{:,.0f}'.format(s.risk_rs_high) }}</span></td>
+            <td class="text-right whitespace-nowrap">
+              <a class="btn btn-outline !py-1 !px-2 text-xs" href="https://www.tradingview.com/chart/?symbol=NSE:{{ c.symbol }}" target="_blank" rel="noopener" title="Open chart on TradingView">
+                <i data-lucide="line-chart"></i>
+              </a>
+              <a class="btn btn-outline !py-1 !px-2 text-xs"
+                 href="/trades/new?instrument={{ c.symbol }}&entry_price={{ c.suggested_entry }}&sl={{ c.suggested_sl }}&qty={{ s.qty_high }}&setup={{ row.scans[0].label|urlencode }}"
+                 title="Plan a trade prefilled at 0.5% risk">
+                <i data-lucide="file-plus"></i>Plan
+              </a>
+              {% if row.on_watchlist %}
+                <span class="pill bg-zinc-100 text-zinc-500 border-zinc-200 text-[10px]">Watching</span>
+              {% else %}
+                <form method="post" action="/watchlist/add" class="inline">
+                  <input type="hidden" name="symbol" value="{{ c.symbol }}">
+                  <input type="hidden" name="setup_label" value="{{ row.scans[0].label }}">
+                  <input type="hidden" name="alert_price" value="{{ c.suggested_entry }}">
+                  <input type="hidden" name="suggested_sl" value="{{ c.suggested_sl }}">
+                  <input type="hidden" name="notes" value="Tier {{ row.tier }} · {{ row.scan_count }} scan(s) · score {{ '{:.0f}'.format(c.score) }}">
+                  <input type="hidden" name="return_to" value="/scanners">
+                  <button class="btn btn-ghost !py-1 !px-2 text-xs" title="Save to watchlist"><i data-lucide="bookmark"></i></button>
+                </form>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
   </div>
 
-  <!-- Scan pickers -->
-  <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
+  <!-- Reuse the scannerSelect Alpine component from below -->
+  {% endif %}
+
+  <!-- Individual scan pickers (collapsed) -->
+  <details class="card p-4">
+    <summary class="cursor-pointer text-sm font-semibold text-zinc-600 flex items-center gap-2">
+      <i data-lucide="chevron-right" class="w-4 h-4"></i>Run individual scan
+      <span class="text-xs text-zinc-400 ml-2">(useful for tuning detectors)</span>
+    </summary>
+    <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-4 mt-4">
     {% for st in scan_types %}
       {% set lr = last_runs.get(st.key) %}
       <form method="post" action="/scanners/run" class="card p-5 hover:shadow-md transition flex flex-col">
@@ -122,7 +273,8 @@
         </div>
       </form>
     {% endfor %}
-  </div>
+    </div>
+  </details>
 
   <!-- Results -->
   {% if results is not none %}

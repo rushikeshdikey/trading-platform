@@ -255,7 +255,10 @@ class Watchlist(Base):
 
 
 class ScanRun(Base):
-    """History of scanner runs (for UI 'last run at' and debugging)."""
+    """History of scanner runs (per user) — for the UI 'last run' indicator
+    and debugging. Result payloads live in the SHARED ``ScanCache`` so the
+    background pre-warm doesn't have to pick a user.
+    """
 
     __tablename__ = "scan_run"
 
@@ -269,6 +272,22 @@ class ScanRun(Base):
     candidates_count: Mapped[int] = mapped_column(Integer, default=0)
     elapsed_ms: Mapped[int] = mapped_column(Integer, default=0)
     bars_refreshed: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class ScanCache(Base):
+    """Shared scanner-result cache — one row per scan_type, upserted by
+    whatever ran the scan most recently (UI button or EOD pre-warm).
+    Universe data, not user data — no user_id, every user reads the same.
+    """
+
+    __tablename__ = "scan_cache"
+
+    scan_type: Mapped[str] = mapped_column(String, primary_key=True)
+    run_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    universe_size: Mapped[int] = mapped_column(Integer, default=0)
+    candidates_count: Mapped[int] = mapped_column(Integer, default=0)
+    elapsed_ms: Mapped[int] = mapped_column(Integer, default=0)
+    payload: Mapped[str] = mapped_column(Text, nullable=False)
 
 
 class InstrumentMeta(Base):
