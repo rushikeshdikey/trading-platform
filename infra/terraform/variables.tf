@@ -11,9 +11,9 @@ variable "instance_type" {
 }
 
 variable "root_volume_gb" {
-  description = "EBS gp3 root volume size in GB. 20 GB covers ~3 years of trading data + DB + image cache."
+  description = "EBS gp3 root volume size in GB. AL2023 ARM AMI ships with a 30GB snapshot — that's the minimum. 30 GB covers ~3 years of trading data + DB + image cache."
   type        = number
-  default     = 20
+  default     = 30
 }
 
 variable "admin_ip_cidr" {
