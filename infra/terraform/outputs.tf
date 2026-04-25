@@ -13,6 +13,11 @@ output "ssm_session_command" {
   value       = "aws ssm start-session --target ${aws_instance.app.id} --region ${var.aws_region}"
 }
 
+output "github_actions_role_arn" {
+  description = "Add this as the AWS_ROLE_ARN secret in the GitHub repo (Settings → Secrets and variables → Actions)."
+  value       = aws_iam_role.github_actions.arn
+}
+
 output "next_steps" {
   description = "Bootstrap checklist after first apply."
   value       = <<-EOT

@@ -36,3 +36,15 @@ variable "key_pair_name" {
   type        = string
   default     = ""
 }
+
+variable "github_repo" {
+  description = "owner/name of the GitHub repository allowed to assume the deploy role."
+  type        = string
+  default     = "rushikeshdikey/trading-platform"
+}
+
+variable "create_github_oidc_provider" {
+  description = "Create the AWS IAM OIDC provider for GitHub Actions. Set to false if zilionix already has one in this account."
+  type        = bool
+  default     = true
+}
