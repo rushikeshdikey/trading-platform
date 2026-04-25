@@ -9,7 +9,9 @@ on:
 jobs:
   test:
     name: lint + tests
-    runs-on: ubuntu-latest
+    # Native arm64 — matches the prod Graviton target so we catch arch-specific
+    # surprises before they hit prod, and the suite runs faster than emulated.
+    runs-on: ubuntu-24.04-arm
     services:
       postgres:
         image: postgres:16-alpine

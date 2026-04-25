@@ -21,13 +21,15 @@ concurrency:
 jobs:
   build-and-push:
     name: Build + push image
-    runs-on: ubuntu-latest
+    # Native arm64 runner — no QEMU emulation. Build is ~5× faster and
+    # deterministic (the previous emulated build occasionally raced the
+    # SSM upload step and left deploys in mixed states).
+    runs-on: ubuntu-24.04-arm
     outputs:
       image_tag: ${{ steps.meta.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
 
-      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
@@ -103,16 +105,14 @@ jobs:
           CMD_ID=$(cat /tmp/cmd_id)
           aws ssm wait command-executed --command-id "$CMD_ID" --instance-id ${{ steps.ec2.outputs.id }}
 
-      - name: Pull new image + restart APP ONLY (zero-downtime)
+      - name: Pull new image + restart on instance
         run: |
-          # Critical: only restart the app container — leaves Caddy and
-          # Postgres running so port 443 stays open during the deploy.
-          # `--no-deps` keeps the change scoped to `app`. `--wait` blocks
-          # until the new container's healthcheck passes (curl /health).
-          # Caddy's lb_try_duration holds in-flight requests during the
-          # ~5-10s gap between old container stop and new container ready.
-          # Net effect: deploys are ~invisible to logged-in users instead
-          # of a 60-90s outage from the previous `systemctl restart` path.
+          # Reverted to the simple `systemctl restart trading` flow until we
+          # move to ECS Fargate. The earlier zero-downtime attempt with
+          # `up --wait` + `caddy reload` was less reliable than this on a
+          # 1 GB box — the SSM agent stalled under memory pressure. With
+          # t4g.small (2 GB) this restart still incurs ~30-60s of downtime
+          # but lands every time. Real zero-downtime comes via ALB + Fargate.
           IMAGE="${{ env.IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}"
           aws ssm send-command \
             --instance-ids ${{ steps.ec2.outputs.id }} \
@@ -125,9 +125,9 @@ jobs:
               \"sed -i.bak '/^APP_IMAGE=/d' .env || true\",
               \"echo APP_IMAGE=${IMAGE} >> .env\",
               \"sudo -u ec2-user docker login ghcr.io -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }} 2>&1 | tail -1\",
-              \"sudo -u ec2-user docker compose pull app\",
-              \"sudo -u ec2-user docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile 2>&1 | tail -3 || true\",
-              \"sudo -u ec2-user docker compose up -d --no-deps --wait app\",
+              \"sudo -u ec2-user docker compose pull\",
+              \"systemctl restart trading\",
+              \"sleep 5\",
               \"sudo -u ec2-user docker compose ps\"
             ]" \
             --query "Command.CommandId" --output text > /tmp/cmd_id
