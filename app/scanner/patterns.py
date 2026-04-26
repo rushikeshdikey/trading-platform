@@ -24,7 +24,13 @@ from .bars_cache import Bar
 
 LOOKBACK_BARS = 180
 PIVOT_STRENGTH = 5
-MIN_BARS = 120
+# 60 trading bars = ~3 months. Lowered from 120 because prod's bars cache
+# only goes ~70 days deep until you've run multiple refresh cycles, and the
+# old 120 gate locked the user out of EVERY signal (funnel showed 0/4397).
+# Detectors that genuinely need more history (Tightness Trading, Base on Base)
+# do their own len(bars) check inside and silently skip shallow symbols —
+# that's the correct behaviour for those particular patterns.
+MIN_BARS = 60
 MIN_ADV20_RS = 2_00_00_000.0  # ₹2 Cr average daily traded value
 MIN_PRICE = 20.0
 
