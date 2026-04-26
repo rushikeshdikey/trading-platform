@@ -59,7 +59,10 @@ def _load_universe_and_bars(db: Session) -> tuple[list[str], dict[str, list]]:
     completes in single-digit seconds.
     """
     symbols = universe_mod.universe_from_cache(db)
-    bars_map = bars_cache.bars_by_symbol(db, symbols)
+    # 380 calendar days ≈ 252 trading days — enough for the Minervini Trend
+    # Template's 52-week measures. Cheaper detectors slice down to their own
+    # smaller windows internally.
+    bars_map = bars_cache.bars_by_symbol(db, symbols, lookback_days=380)
     return symbols, bars_map
 
 
@@ -122,20 +125,29 @@ def gated_universe_breakdown(db: Session) -> dict:
 
 
 def _detect_one(
-    scan_type: str, symbols: list[str], bars_map: dict[str, list],
+    scan_type: str,
+    symbols: list[str],
+    bars_map: dict[str, list],
+    rs_ratings: dict[str, int] | None = None,
 ) -> list[Candidate]:
     _, detector = SCAN_TYPES[scan_type]
+    rs_ratings = rs_ratings or {}
     out: list[Candidate] = []
     for sym in symbols:
         bars = bars_map.get(sym) or []
         if not bars:
             continue
         try:
-            c = detector(sym, bars)
+            c = detector(sym, bars, rs_rating=rs_ratings.get(sym))
         except Exception as exc:  # noqa: BLE001 — never let one bad symbol kill the scan
             log.debug("detector %s failed on %s: %s", scan_type, sym, exc)
             continue
         if c is not None:
+            # Attach RS rating to every candidate's extras for display,
+            # whether the detector used it as a gate or not.
+            rating = rs_ratings.get(sym)
+            if rating is not None and "rs_rating" not in c.extras:
+                c.extras["rs_rating"] = rating
             out.append(c)
     out.sort(key=lambda c: c.score, reverse=True)
     return out[:TOP_N_RESULTS]
@@ -150,7 +162,9 @@ def run_scan(db: Session, scan_type: str) -> tuple[list[Candidate], ScanRun]:
 
     started = time.perf_counter()
     symbols, bars_map = _load_universe_and_bars(db)
-    top = _detect_one(scan_type, symbols, bars_map)
+    from . import rs_rating as rs
+    rs_ratings = rs.compute_ratings(db, symbols)
+    top = _detect_one(scan_type, symbols, bars_map, rs_ratings=rs_ratings)
     elapsed_ms = int((time.perf_counter() - started) * 1000)
 
     now = datetime.utcnow()
@@ -185,18 +199,20 @@ def run_all_scans(
     """
     started = time.perf_counter()
     symbols, bars_map = _load_universe_and_bars(db)
+    from . import rs_rating as rs
+    rs_ratings = rs.compute_ratings(db, symbols)
     load_ms = int((time.perf_counter() - started) * 1000)
 
     results: dict[str, list[Candidate]] = {}
     per_scan_ms: dict[str, int] = {}
 
-    # 4 detectors, 4 threads. Detectors release the GIL during numpy work
-    # so this gives real parallelism on multi-core machines, and at worst
-    # is no slower than sequential.
+    # All detectors, parallel threads. Detectors release the GIL during numpy
+    # work so this gives real parallelism on multi-core machines, and at worst
+    # is no slower than sequential. RS ratings are precomputed once and shared.
     detect_started = time.perf_counter()
     with ThreadPoolExecutor(max_workers=len(SCAN_TYPES)) as ex:
         future_to_type = {
-            ex.submit(_detect_one_timed, scan_type, symbols, bars_map): scan_type
+            ex.submit(_detect_one_timed, scan_type, symbols, bars_map, rs_ratings): scan_type
             for scan_type in SCAN_TYPES
         }
         for future in as_completed(future_to_type):
@@ -257,10 +273,13 @@ def _upsert_scan_cache(
 
 
 def _detect_one_timed(
-    scan_type: str, symbols: list[str], bars_map: dict[str, list],
+    scan_type: str,
+    symbols: list[str],
+    bars_map: dict[str, list],
+    rs_ratings: dict[str, int] | None = None,
 ) -> tuple[list[Candidate], int]:
     started = time.perf_counter()
-    out = _detect_one(scan_type, symbols, bars_map)
+    out = _detect_one(scan_type, symbols, bars_map, rs_ratings=rs_ratings)
     return out, int((time.perf_counter() - started) * 1000)
 
 

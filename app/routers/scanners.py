@@ -255,7 +255,10 @@ def refresh_bars(request: Request, db: Session = Depends(get_db)):
     """
     from ..scanner import bars_cache as bc
 
-    started = bc.start_background_refresh(lookback_days=180)
+    # 380 calendar days = ~252 trading bars — needed for Minervini Trend
+    # Template's 52-week measures and the RS Rating's 12-month return window.
+    # First-time refresh against an empty/shallow cache takes ~20-40 minutes.
+    started = bc.start_background_refresh(lookback_days=380)
     msg = "started" if started else "already_running"
     return RedirectResponse(url=f"/scanners?refresh={msg}", status_code=303)
 

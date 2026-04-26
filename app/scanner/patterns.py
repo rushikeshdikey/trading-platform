@@ -173,7 +173,7 @@ def _passes_liquidity(bars: Sequence[Bar]) -> bool:
 # -- Horizontal Resistance ----------------------------------------------------
 
 
-def horizontal_resistance(symbol: str, bars: Sequence[Bar]) -> Candidate | None:
+def horizontal_resistance(symbol: str, bars: Sequence[Bar], **_: object) -> Candidate | None:
     """Chartsmaze-style horizontal resistance.
 
     Quality gates in order (any failure → return None):
@@ -300,7 +300,7 @@ def horizontal_resistance(symbol: str, bars: Sequence[Bar]) -> Candidate | None:
 # -- Trendline Setup ----------------------------------------------------------
 
 
-def trendline_setup(symbol: str, bars: Sequence[Bar]) -> Candidate | None:
+def trendline_setup(symbol: str, bars: Sequence[Bar], **_: object) -> Candidate | None:
     """Rising trendline drawn through swing lows.
 
     Only rising trendlines are emitted (long setup). For falling trendlines
@@ -369,7 +369,7 @@ def trendline_setup(symbol: str, bars: Sequence[Bar]) -> Candidate | None:
 # -- Tight Setup --------------------------------------------------------------
 
 
-def tight_setup(symbol: str, bars: Sequence[Bar]) -> Candidate | None:
+def tight_setup(symbol: str, bars: Sequence[Bar], **_: object) -> Candidate | None:
     if not _passes_liquidity(bars):
         return None
     bars = list(bars[-LOOKBACK_BARS:])
@@ -436,7 +436,7 @@ def tight_setup(symbol: str, bars: Sequence[Bar]) -> Candidate | None:
 # -- Tightness Trading (Ankur Patel) ------------------------------------------
 
 
-def tightness_trading(symbol: str, bars: Sequence[Bar]) -> Candidate | None:
+def tightness_trading(symbol: str, bars: Sequence[Bar], **_: object) -> Candidate | None:
     """Focus-on-one-setup: prior strong upmove → basing phase → low-volume dry-up
     → tight-range consolidation → buy points A (cheat) and B (breakout).
 
@@ -556,7 +556,7 @@ INST_MIN_GAIN_PCT = 0.05            # underlying uptrend bias: 25-bar return ≥
 INST_MIN_VS_50DMA = 1.0             # must be above 50-DMA — not buying weakness
 
 
-def institutional_buying(symbol: str, bars: Sequence[Bar]) -> Candidate | None:
+def institutional_buying(symbol: str, bars: Sequence[Bar], **_: object) -> Candidate | None:
     """Smart-money accumulation detector — William O'Neil style.
 
     An "accumulation day" is: close in the upper 50% of day range AND
@@ -682,7 +682,7 @@ def _cluster_pivot(highs: np.ndarray, start_idx: int, end_idx: int,
     return float(sum(cluster) / len(cluster))
 
 
-def base_on_base(symbol: str, bars: Sequence[Bar]) -> Candidate | None:
+def base_on_base(symbol: str, bars: Sequence[Bar], **_: object) -> Candidate | None:
     """Detect a base-on-base continuation pattern.
 
     Pipeline:
@@ -759,6 +759,120 @@ def base_on_base(symbol: str, bars: Sequence[Bar]) -> Candidate | None:
     )
 
 
+# -- Minervini Trend Template (SEPA Stage 2) ----------------------------------
+
+# Mark Minervini's 8-criteria filter — the canonical "Stage 2 leader" gate.
+# Every criterion must pass; this is intentionally restrictive ("trade less,
+# trade solid"). Healthy markets produce 10-40 names from a 4500-stock
+# universe; corrections produce 0-5.
+#
+# Reference: "Trade Like a Stock Market Wizard", chapter on the Trend Template.
+
+MINERVINI_MIN_BARS = 252                  # need 52-week measures
+MINERVINI_RS_MIN = 70                     # IBD floor; preferably ≥ 80
+MINERVINI_PCT_ABOVE_52W_LOW = 0.25        # ≥ 25% above 52w low
+MINERVINI_PCT_BELOW_52W_HIGH = 0.25       # ≤ 25% below 52w high
+MINERVINI_SMA200_TREND_BARS = 22          # 200-DMA trending up over ≥ 1 month
+
+
+def _sma(arr: np.ndarray, n: int) -> float | None:
+    if len(arr) < n:
+        return None
+    return float(arr[-n:].mean())
+
+
+def minervini_trend_template(
+    symbol: str, bars: Sequence[Bar], *, rs_rating: int | None = None,
+) -> Candidate | None:
+    """The Minervini Trend Template — 8 hard gates.
+
+    Requires an RS Rating computed cross-sectionally; without one we can't
+    judge gate 8 and skip the symbol entirely.
+    """
+    if rs_rating is None or rs_rating < MINERVINI_RS_MIN:
+        return None
+    if not _passes_liquidity(bars):
+        return None
+    # Minervini needs a FULL year of history for the 52-week measures —
+    # don't truncate to LOOKBACK_BARS like the other detectors do.
+    bars = list(bars[-MINERVINI_MIN_BARS:])
+    if len(bars) < MINERVINI_MIN_BARS:
+        return None
+
+    closes = _closes(bars)
+    highs = _highs(bars)
+    lows = _lows(bars)
+    last_close = float(closes[-1])
+
+    # ---- Gates 1–5: moving-average stack & trend -------------------------
+    sma50 = _sma(closes, 50)
+    sma150 = _sma(closes, 150)
+    sma200 = _sma(closes, 200)
+    if sma50 is None or sma150 is None or sma200 is None:
+        return None
+
+    # 1. Price above both 150-DMA and 200-DMA
+    if not (last_close > sma150 and last_close > sma200):
+        return None
+    # 2. 150-DMA above 200-DMA
+    if not sma150 > sma200:
+        return None
+    # 3. 200-DMA trending up over the last ~month
+    sma200_then = float(closes[-200 - MINERVINI_SMA200_TREND_BARS : -MINERVINI_SMA200_TREND_BARS].mean())
+    if not sma200 > sma200_then:
+        return None
+    # 4. 50-DMA above 150-DMA above 200-DMA (proper stacking)
+    if not (sma50 > sma150 > sma200):
+        return None
+    # 5. Price above 50-DMA
+    if not last_close > sma50:
+        return None
+
+    # ---- Gates 6 & 7: distance from 52-week extremes ---------------------
+    low_52w = float(lows[-252:].min())
+    high_52w = float(highs[-252:].max())
+    if low_52w <= 0 or high_52w <= 0:
+        return None
+    pct_above_low = (last_close / low_52w) - 1.0
+    pct_below_high = (high_52w / last_close) - 1.0
+    if pct_above_low < MINERVINI_PCT_ABOVE_52W_LOW:
+        return None
+    if pct_below_high > MINERVINI_PCT_BELOW_52W_HIGH:
+        return None
+
+    # ---- Gate 8: RS Rating already validated above -----------------------
+
+    # Sizing: enter near pivot (last close), SL at recent 20-bar low minus 1%.
+    base_low = float(lows[-20:].min())
+    suggested_entry = round(last_close, 2)
+    suggested_sl = round(base_low * 0.99, 2)
+
+    # Score: RS rating dominates (it IS the conviction proxy), plus a bonus
+    # for being closer to 52-week high (= less extended) and a bonus for a
+    # tighter recent base.
+    proximity_bonus = (1 - pct_below_high / MINERVINI_PCT_BELOW_52W_HIGH) * 10
+    score = round(rs_rating + proximity_bonus, 2)
+
+    return Candidate(
+        symbol=symbol,
+        scan_type="minervini_trend_template",
+        score=score,
+        close=last_close,
+        suggested_entry=suggested_entry,
+        suggested_sl=suggested_sl,
+        extras={
+            "rs_rating": rs_rating,
+            "sma50": round(sma50, 2),
+            "sma150": round(sma150, 2),
+            "sma200": round(sma200, 2),
+            "pct_above_52w_low": round(pct_above_low * 100, 1),
+            "pct_below_52w_high": round(pct_below_high * 100, 1),
+            "low_52w": round(low_52w, 2),
+            "high_52w": round(high_52w, 2),
+        },
+    )
+
+
 # -- Dispatch -----------------------------------------------------------------
 
 SCAN_TYPES = {
@@ -768,4 +882,5 @@ SCAN_TYPES = {
     "tightness_trading": ("Tightness Trading", tightness_trading),
     "institutional_buying": ("Institutional Buying", institutional_buying),
     "base_on_base": ("Base on Base", base_on_base),
+    "minervini_trend_template": ("Minervini Trend Template", minervini_trend_template),
 }

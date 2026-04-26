@@ -27,7 +27,7 @@
   {% set err = request.query_params.get('error') %}
   {% set rf = request.query_params.get('refresh_fund') %}
   {% set rf_err = request.query_params.get('refresh_fund_error') %}
-  {% if refresh == 'started' %}<div class="p-3 rounded-lg bg-sky-50 border border-sky-200 text-sky-800 text-sm"><strong>Bars refresh started in background.</strong> Pulling up to 180 days from NSE + BSE — this takes ~5-15 minutes on a cold cache. Reload the page to see the Bars count tick up.</div>
+  {% if refresh == 'started' %}<div class="p-3 rounded-lg bg-sky-50 border border-sky-200 text-sky-800 text-sm"><strong>Bars refresh started in background.</strong> Pulling up to 380 days from NSE + BSE (≈ 252 trading bars — needed for Minervini Trend Template). First run on a shallow cache takes 20-40 minutes. Reload the page to see the Bars count tick up.</div>
   {% elif refresh == 'already_running' %}<div class="p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm"><strong>Bars refresh already running.</strong> Wait for it to finish before kicking off another.</div>
   {% elif refresh %}<div class="p-3 rounded-lg bg-sky-50 border border-sky-200 text-sky-800 text-sm"><strong>Bars cache refreshed:</strong> <span class="tabular-nums">{{ refresh }}</span></div>{% endif %}
   {% if rf %}<div class="p-3 rounded-lg bg-sky-50 border border-sky-200 text-sky-800 text-sm"><strong>Market-cap refresh:</strong> {{ rf }} (running in background — reload to see progress)</div>{% endif %}
@@ -503,6 +503,7 @@
           {% elif st.key == 'tightness_trading' %}<i data-lucide="target" class="w-4 h-4 text-zinc-500"></i>
           {% elif st.key == 'institutional_buying' %}<i data-lucide="building-2" class="w-4 h-4 text-zinc-500"></i>
           {% elif st.key == 'base_on_base' %}<i data-lucide="layers-2" class="w-4 h-4 text-zinc-500"></i>
+          {% elif st.key == 'minervini_trend_template' %}<i data-lucide="award" class="w-4 h-4 text-zinc-500"></i>
           {% endif %}
           <h3 class="font-semibold">{{ st.label }}</h3>
         </div>
@@ -513,6 +514,7 @@
           {% elif st.key == 'tightness_trading' %}5-phase Ankur Patel setup: strong upmove (≥30%) → base → low-vol dry-up → tight range (≤6%) → buy points A/B.
           {% elif st.key == 'institutional_buying' %}Smart-money accumulation — ≥ 6 up-days on volume ≥ 1.25× 50-DMA in last 25 bars, in confirmed uptrend (price &gt; 50-DMA, +5% over 25 bars).
           {% elif st.key == 'base_on_base' %}Continuation pattern — prior base broke out, price held above the breakout level, new base now sitting ≥ 3% above the first; close within 7% below new pivot.
+          {% elif st.key == 'minervini_trend_template' %}Mark Minervini's 8-criteria SEPA Stage 2 filter — 50/150/200-DMA stacked + uptrend, ≥25% above 52w low, ≤25% below 52w high, RS Rating ≥ 70.
           {% endif %}
         </p>
         <div class="mt-4 flex items-center justify-between gap-2">
@@ -667,6 +669,8 @@
                 <th>Accum days</th><th>Distrib</th><th>Net</th><th>25b gain</th><th>Last accum</th>
               {% elif selected_scan.key == 'base_on_base' %}
                 <th>Prior base (R1)</th><th>Current base (R2)</th><th>Step up</th><th>Distance</th>
+              {% elif selected_scan.key == 'minervini_trend_template' %}
+                <th>RS</th><th>50-DMA</th><th>200-DMA</th><th>From 52w high</th><th>From 52w low</th>
               {% endif %}
               <th>Entry</th><th>SL</th><th>Qty (0.25% / 0.5%)</th><th>Risk ₹ (0.25% / 0.5%)</th><th class="text-right">Actions</th>
             </tr>
@@ -717,6 +721,12 @@
                   <td class="tabular-nums font-semibold">₹{{ c.extras.current_base_level }}</td>
                   <td class="tabular-nums text-emerald-700">+{{ c.extras.step_up_pct }}%</td>
                   <td class="tabular-nums text-amber-700">{{ c.extras.distance_pct }}%</td>
+                {% elif selected_scan.key == 'minervini_trend_template' %}
+                  <td class="tabular-nums font-bold {% if c.extras.rs_rating >= 90 %}text-emerald-700{% elif c.extras.rs_rating >= 80 %}text-emerald-600{% else %}text-zinc-700{% endif %}">{{ c.extras.rs_rating }}</td>
+                  <td class="tabular-nums">₹{{ c.extras.sma50 }}</td>
+                  <td class="tabular-nums">₹{{ c.extras.sma200 }}</td>
+                  <td class="tabular-nums text-amber-700">−{{ c.extras.pct_below_52w_high }}%</td>
+                  <td class="tabular-nums text-emerald-700">+{{ c.extras.pct_above_52w_low }}%</td>
                 {% endif %}
                 <td class="tabular-nums font-semibold">₹{{ '{:,.2f}'.format(c.suggested_entry) }}</td>
                 <td class="tabular-nums text-rose-700">₹{{ '{:,.2f}'.format(c.suggested_sl) }}</td>
