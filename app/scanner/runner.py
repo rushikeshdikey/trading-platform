@@ -132,6 +132,7 @@ def _detect_one(
 ) -> list[Candidate]:
     _, detector = SCAN_TYPES[scan_type]
     rs_ratings = rs_ratings or {}
+    from . import tight_sl as tsl
     out: list[Candidate] = []
     for sym in symbols:
         bars = bars_map.get(sym) or []
@@ -142,13 +143,30 @@ def _detect_one(
         except Exception as exc:  # noqa: BLE001 — never let one bad symbol kill the scan
             log.debug("detector %s failed on %s: %s", scan_type, sym, exc)
             continue
-        if c is not None:
-            # Attach RS rating to every candidate's extras for display,
-            # whether the detector used it as a gate or not.
-            rating = rs_ratings.get(sym)
-            if rating is not None and "rs_rating" not in c.extras:
-                c.extras["rs_rating"] = rating
-            out.append(c)
+        if c is None:
+            continue
+
+        # Apply tight-SL gate uniformly across all detectors. The user's
+        # psychology requires ≤2.5% risk per trade; structurally-wider
+        # setups get rejected here regardless of how strong the pattern is.
+        # This makes "no discretion" a system property, not a detector author's
+        # preference.
+        sl = tsl.compute_tight_sl(bars, c.suggested_entry or c.close)
+        if sl.price is None:
+            # Trade auto-rejected — record the reason in case we want
+            # to debug later, but don't surface to the user.
+            log.debug("tight-SL reject %s/%s: %s", scan_type, sym, sl.rejected_reason)
+            continue
+        c.suggested_sl = sl.price
+        c.extras["sl_method"] = sl.method
+        c.extras["sl_pct"] = round(sl.sl_pct * 100, 2)
+
+        # Attach RS rating to every candidate's extras for display,
+        # whether the detector used it as a gate or not.
+        rating = rs_ratings.get(sym)
+        if rating is not None and "rs_rating" not in c.extras:
+            c.extras["rs_rating"] = rating
+        out.append(c)
     out.sort(key=lambda c: c.score, reverse=True)
     return out[:TOP_N_RESULTS]
 

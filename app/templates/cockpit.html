@@ -3,7 +3,98 @@
 {% block content %}
 {% set m = state.market %}
 {% set rb = state.risk_budget %}
+{% set ap = state.auto_pilot %}
 <div class="max-w-7xl mx-auto space-y-6">
+
+  {# ============================================================
+     AUTO-PILOT — today's prescriptive picks. The headline panel.
+     "Trade less, trade solid." Either the system tells you what
+     to buy with everything pre-computed, or it tells you to stay
+     in cash. No discretion in between.
+     ============================================================ #}
+  {% if ap.has_picks %}
+  <div class="rounded-xl border-2 border-emerald-300 bg-gradient-to-br from-emerald-50 to-white px-6 py-5">
+    <div class="flex items-center justify-between flex-wrap gap-2 mb-4">
+      <div class="flex items-center gap-2">
+        <i data-lucide="rocket" class="w-5 h-5 text-emerald-700"></i>
+        <span class="text-[11px] font-bold uppercase tracking-widest text-emerald-700">Auto-Pilot</span>
+        <h2 class="text-lg font-semibold tracking-tight">Today's trades — A+ confluence</h2>
+      </div>
+      <div class="text-xs text-zinc-500 tabular-nums">
+        Risk per trade: {{ '%.2f'|format(ap.risk_pct_used * 100) }}%
+        · Total at risk: <strong class="text-zinc-900">₹{{ '{:,.0f}'.format(ap.total_risk_rs) }}</strong>
+        {% if ap.cache_age_minutes is not none %}
+          · Picks {{ ap.cache_age_minutes }} min old
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="space-y-3">
+      {% for p in ap.picks %}
+      <div class="rounded-lg bg-white border border-emerald-200 px-4 py-3 flex flex-wrap items-center gap-x-5 gap-y-2">
+        <div class="flex items-center gap-3 min-w-0">
+          <span class="inline-flex items-center justify-center w-7 h-7 rounded-full bg-emerald-600 text-white text-xs font-bold tabular-nums">{{ p.rank }}</span>
+          <div class="min-w-0">
+            <div class="flex items-center gap-2">
+              <span class="text-base font-bold tracking-tight">{{ p.symbol }}</span>
+              {% if p.rs_rating %}
+              <span class="pill text-[10px] font-bold {% if p.rs_rating >= 90 %}bg-emerald-100 text-emerald-800 border-emerald-300{% elif p.rs_rating >= 80 %}bg-emerald-50 text-emerald-700 border-emerald-200{% else %}bg-zinc-100 text-zinc-700 border-zinc-200{% endif %}">RS {{ p.rs_rating }}</span>
+              {% endif %}
+              <span class="pill text-[10px] bg-emerald-100 text-emerald-800 border-emerald-300 font-bold">{{ p.tier }}</span>
+            </div>
+            <div class="text-xs text-zinc-500 mt-0.5">{{ p.confluence|join(' · ') }}</div>
+          </div>
+        </div>
+
+        <div class="flex-1 grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-1 text-xs tabular-nums">
+          <div>
+            <div class="text-[10px] text-zinc-400 uppercase tracking-wide">Buy at</div>
+            <div class="font-semibold text-sm">₹{{ '{:,.2f}'.format(p.entry) }}</div>
+          </div>
+          <div>
+            <div class="text-[10px] text-zinc-400 uppercase tracking-wide">Stop loss</div>
+            <div class="font-semibold text-sm text-rose-700">₹{{ '{:,.2f}'.format(p.sl) }} <span class="text-[10px]">(−{{ p.sl_pct }}%)</span></div>
+            <div class="text-[10px] text-zinc-400">{{ p.sl_method }}</div>
+          </div>
+          <div>
+            <div class="text-[10px] text-zinc-400 uppercase tracking-wide">Quantity</div>
+            <div class="font-semibold text-sm">{{ p.qty }}</div>
+            <div class="text-[10px] text-zinc-400">₹{{ '{:,.0f}'.format(p.notional_rs) }} notional</div>
+          </div>
+          <div>
+            <div class="text-[10px] text-zinc-400 uppercase tracking-wide">Target (3R)</div>
+            <div class="font-semibold text-sm text-emerald-700">₹{{ '{:,.2f}'.format(p.target) }}</div>
+            <div class="text-[10px] text-zinc-400">Risk ₹{{ '{:,.0f}'.format(p.risk_rs) }}</div>
+          </div>
+        </div>
+
+        <a href="/trades/new?instrument={{ p.symbol }}&entry_price={{ p.entry }}&sl={{ p.sl }}&qty={{ p.qty }}&setup=Auto-Pilot+A%2B"
+           class="btn btn-primary !py-2 !px-3 text-xs whitespace-nowrap">
+          <i data-lucide="file-plus"></i>Plan trade
+        </a>
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="mt-4 text-xs text-zinc-600 flex items-center gap-2">
+      <i data-lucide="info" class="w-3.5 h-3.5 text-zinc-400"></i>
+      Action: Open at next session. Use the suggested SL exactly. Do not modify quantity.
+    </div>
+  </div>
+  {% else %}
+  <div class="rounded-xl border-2 border-zinc-200 bg-zinc-50 px-6 py-5">
+    <div class="flex items-center gap-3">
+      <div class="inline-flex items-center justify-center w-12 h-12 rounded-full bg-white border border-zinc-200">
+        <i data-lucide="moon" class="w-6 h-6 text-zinc-500"></i>
+      </div>
+      <div>
+        <div class="text-[11px] font-bold uppercase tracking-widest text-zinc-500">Auto-Pilot</div>
+        <h2 class="text-lg font-semibold tracking-tight">Stay in cash today</h2>
+        <p class="text-sm text-zinc-600 mt-0.5">{{ ap.no_trade_reason or 'No qualifying confluence today.' }}</p>
+      </div>
+    </div>
+  </div>
+  {% endif %}
 
   <!-- Market verdict banner -->
   <div class="rounded-xl border-2 px-6 py-4 {{ m.color_class }}">

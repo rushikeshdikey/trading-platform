@@ -348,6 +348,8 @@ class CockpitState:
     risk_budget: RiskBudgetPanel
     cooldown: analytics.StreakAlert
     edge: list[analytics.SetupStats]
+    # Auto-Pilot — top 1-3 prescriptive picks for today. The headline panel.
+    auto_pilot: object = None  # AutoPilotState; loose-typed to avoid circular import
     # Signals are loaded lazily via /cockpit/signals (HTMX); included here
     # only when explicitly requested.
     signals: list[ConvictionSignal] = field(default_factory=list)
@@ -360,6 +362,11 @@ def build_cockpit(db: Session, *, include_signals: bool = False) -> CockpitState
     risk = build_risk_budget(db)
     cooldown = analytics.consecutive_loss_alert(db, streak_threshold=3)
     edge = build_edge_panel(db)
+    from . import auto_pilot as ap_mod
+    auto_pilot = ap_mod.build_daily_picks(db)
+    # Stamp the market verdict so the panel can render "Stay in cash" loud
+    # when the macro is RED regardless of A+ picks existing.
+    auto_pilot.market_verdict_level = market.level
     signals: list[ConvictionSignal] = []
     signals_meta: dict = {}
     if include_signals:
@@ -370,6 +377,7 @@ def build_cockpit(db: Session, *, include_signals: bool = False) -> CockpitState
         risk_budget=risk,
         cooldown=cooldown,
         edge=edge,
+        auto_pilot=auto_pilot,
         signals=signals,
         signals_meta=signals_meta,
     )
