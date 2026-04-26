@@ -63,11 +63,26 @@ def _load_universe_and_bars(db: Session) -> tuple[list[str], dict[str, list]]:
     return symbols, bars_map
 
 
+_breakdown_cache: dict = {"at": 0.0, "value": None}
+_BREAKDOWN_TTL_S = 300  # 5 minutes — funnel doesn't change minute-to-minute
+
+
 def gated_universe_breakdown(db: Session) -> dict:
     """Funnel breakdown for the /scanners status panel — makes the
-    "0 candidates" failure mode visible instead of mysterious. Walks the
-    universe through every detector quality gate and counts survivors at
-    each step."""
+    "0 candidates" failure mode visible instead of mysterious.
+
+    Cached for 5 minutes because the underlying work (load 4500 symbols'
+    bars, count gates) is multi-second on a small VM and was pinning
+    gunicorn workers when called per-request. The funnel changes only
+    when the bars cache changes (refresh runs in background), so a stale
+    read for a few minutes is harmless.
+    """
+    import time
+    now = time.time()
+    cached = _breakdown_cache
+    if cached["value"] is not None and (now - cached["at"]) < _BREAKDOWN_TTL_S:
+        return cached["value"]
+
     from .patterns import MIN_ADV20_RS, MIN_BARS, MIN_PRICE
 
     symbols = universe_mod.universe_from_cache(db)
@@ -91,7 +106,7 @@ def gated_universe_breakdown(db: Session) -> dict:
         if adv20 >= MIN_ADV20_RS:
             n_min_adv20 += 1
 
-    return {
+    value = {
         "total": n_total,
         "have_bars": n_have_bars,
         "min_bars": n_min_bars,
@@ -101,6 +116,9 @@ def gated_universe_breakdown(db: Session) -> dict:
         "min_price_threshold": MIN_PRICE,
         "min_adv20_threshold_cr": MIN_ADV20_RS / 1e7,
     }
+    _breakdown_cache["at"] = now
+    _breakdown_cache["value"] = value
+    return value
 
 
 def _detect_one(
