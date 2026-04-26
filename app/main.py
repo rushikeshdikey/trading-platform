@@ -128,6 +128,48 @@ prices.start_background_refresher()
 jobs_mod.start()  # APScheduler — daily EOD pre-warm at 15:35 IST
 
 
+def _maybe_bootstrap_bars_cache() -> None:
+    """Self-healing bars cache.
+
+    On every app boot, count rows in daily_bars. If we're below the
+    'shallow cache' threshold, kick off the deep 380-day refresh in a
+    background daemon thread. Effects:
+
+      - Brand-new deployment: cache fills itself within 30-60 minutes
+        of first boot, no manual SSM command required.
+      - Healthy prod (1M+ rows already): no-op, returns immediately.
+      - Catastrophic data loss (cache wiped to <200k): self-heals.
+
+    Runs synchronously here (a single COUNT(*) is cheap), but the
+    refresh itself is the same daemon-thread pattern as the manual
+    Refresh-bars button — never blocks workers.
+    """
+    SHALLOW_THRESHOLD = 200_000
+    try:
+        from sqlalchemy import func
+        from .models import DailyBar
+        from .scanner import bars_cache as bc
+
+        with SessionLocal() as db:
+            n = db.query(func.count(DailyBar.id)).scalar() or 0
+        if n < SHALLOW_THRESHOLD:
+            import logging
+            logging.getLogger("journal.bootstrap").info(
+                "bars cache shallow (%d rows < %d) — kicking off auto-backfill (380d)",
+                n, SHALLOW_THRESHOLD,
+            )
+            bc.start_background_refresh(lookback_days=380)
+    except Exception as exc:  # noqa: BLE001
+        # Bootstrap-time failures should never block app startup.
+        import logging
+        logging.getLogger("journal.bootstrap").warning(
+            "bars bootstrap check failed (non-fatal): %s", exc,
+        )
+
+
+_maybe_bootstrap_bars_cache()
+
+
 @app.get("/api/status")
 def api_status(user=Depends(require_user)):
     """Lightweight status summary consumed by the global nav strip."""
