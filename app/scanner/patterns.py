@@ -537,6 +537,222 @@ def tightness_trading(symbol: str, bars: Sequence[Bar]) -> Candidate | None:
     )
 
 
+# -- Institutional Buying (accumulation) --------------------------------------
+
+# Window over which we count accumulation vs distribution days.
+INST_LOOKBACK_BARS = 25
+INST_VOL_AVG_BARS = 50              # baseline for "above-average volume"
+INST_VOL_SPIKE_RATIO = 1.25         # volume must be ≥ 1.25× 50-day avg
+INST_RANGE_UPPER_PCT = 0.5          # close in upper 50% of day range = accum
+INST_MIN_NET_DAYS = 5               # net (accum - distrib) ≥ 5 over 25 bars
+INST_MIN_ACCUM_DAYS = 6             # absolute accum days ≥ 6 (not just netting)
+INST_MIN_GAIN_PCT = 0.05            # underlying uptrend bias: 25-bar return ≥ 5%
+INST_MIN_VS_50DMA = 1.0             # must be above 50-DMA — not buying weakness
+
+
+def institutional_buying(symbol: str, bars: Sequence[Bar]) -> Candidate | None:
+    """Smart-money accumulation detector — William O'Neil style.
+
+    An "accumulation day" is: close in the upper 50% of day range AND
+    close > prior close AND volume > 1.25× 50-day avg. A "distribution
+    day" is the mirror image (lower half, close < prior, same volume
+    spike). We score the net count over the last 25 bars.
+
+    Quality gates: standard liquidity, plus the symbol must be in a mild
+    uptrend (25-bar return ≥ 2%) — otherwise a stock falling in a
+    waterfall produces fake accumulation days off oversold bounces.
+    """
+    if not _passes_liquidity(bars):
+        return None
+    bars = list(bars[-LOOKBACK_BARS:])
+    if len(bars) < INST_VOL_AVG_BARS + INST_LOOKBACK_BARS:
+        return None
+
+    closes = _closes(bars)
+    highs = _highs(bars)
+    lows = _lows(bars)
+    vols = _volumes(bars)
+    last_close = float(closes[-1])
+
+    # Underlying uptrend bias — the stock must be in a confirmed uptrend,
+    # otherwise volume spikes off oversold bounces look like accumulation.
+    ref_close = float(closes[-INST_LOOKBACK_BARS])
+    gain_pct = (last_close - ref_close) / ref_close
+    if gain_pct < INST_MIN_GAIN_PCT:
+        return None
+    sma50 = float(closes[-INST_VOL_AVG_BARS:].mean())
+    if last_close < sma50 * INST_MIN_VS_50DMA:
+        return None
+
+    # 50-bar baseline volume, computed at each window position so a
+    # gradual volume rise doesn't read as a constant spike.
+    accum = 0
+    distrib = 0
+    accum_days_dates: list = []
+    for i in range(len(bars) - INST_LOOKBACK_BARS, len(bars)):
+        if i < INST_VOL_AVG_BARS:
+            continue
+        baseline = vols[i - INST_VOL_AVG_BARS:i].mean()
+        if baseline <= 0:
+            continue
+        if vols[i] < baseline * INST_VOL_SPIKE_RATIO:
+            continue
+        rng = highs[i] - lows[i]
+        if rng <= 0:
+            continue
+        upper_close = (closes[i] - lows[i]) / rng
+        prev_close = closes[i - 1]
+        if upper_close >= INST_RANGE_UPPER_PCT and closes[i] > prev_close:
+            accum += 1
+            accum_days_dates.append(bars[i].date)
+        elif upper_close < (1 - INST_RANGE_UPPER_PCT) and closes[i] < prev_close:
+            distrib += 1
+
+    net = accum - distrib
+    if accum < INST_MIN_ACCUM_DAYS or net < INST_MIN_NET_DAYS:
+        return None
+
+    # Sizing scaffolding: enter at last close, SL at 25-bar low.
+    base_low = float(lows[-INST_LOOKBACK_BARS:].min())
+    suggested_sl = round(base_low * 0.98, 2)
+    suggested_entry = round(last_close, 2)
+
+    # Score: heavier accumulation + cleaner net = higher score.
+    score = round(accum * 4.0 + net * 3.0 + min(gain_pct * 100, 15), 2)
+
+    return Candidate(
+        symbol=symbol,
+        scan_type="institutional_buying",
+        score=score,
+        close=last_close,
+        suggested_entry=suggested_entry,
+        suggested_sl=suggested_sl,
+        extras={
+            "accum_days": accum,
+            "distrib_days": distrib,
+            "net_days": net,
+            "gain_25b_pct": round(gain_pct * 100, 2),
+            "last_accum_date": accum_days_dates[-1].isoformat() if accum_days_dates else None,
+        },
+    )
+
+
+# -- Base on Base (continuation) ----------------------------------------------
+
+# Two-stage horizontal-resistance pattern. Windows sized to fit inside
+# the 120-bar minimum guaranteed by MIN_BARS / bars cache lookback.
+#   prior base    : bars [-120:-60]  (60 bars, oldest)
+#   breakout zone : bars  [-60:-40]  (20 bars, transition)
+#   current base  : bars  [-40:  0]  (40 bars, today's pivot)
+BOB_PRIOR_START = -120
+BOB_PRIOR_END = -60
+BOB_BREAKOUT_END = -40
+BOB_CURRENT_LEN = 40
+BOB_MIN_STEP_UP_PCT = 0.03          # second base level ≥ 3% above first
+BOB_PROXIMITY_MAX = 0.07            # close within 7% below current pivot
+BOB_NO_FAIL_TOLERANCE = 0.05        # didn't close > 5% below R1 after breakout
+BOB_BREAKOUT_MARGIN = 0.02          # close > R1 * 1.02 = real breakout
+
+
+def _cluster_pivot(highs: np.ndarray, start_idx: int, end_idx: int,
+                   strength: int = PIVOT_STRENGTH,
+                   tolerance_pct: float = HR_TOLERANCE_PCT,
+                   min_touches: int = 2) -> float | None:
+    """Find the dominant resistance cluster in highs[start:end]. Returns the
+    cluster's mean level or None if no qualifying cluster exists."""
+    if end_idx - start_idx < strength * 2 + 5:
+        return None
+    section = highs[start_idx:end_idx]
+    pivots = _swing_high_pivots(section, strength)
+    if len(pivots) < min_touches:
+        return None
+    pivot_vals = [section[p] for p in pivots]
+    # Greedy clustering: pick highest pivot as anchor, gather neighbours.
+    pivot_vals.sort(reverse=True)
+    anchor = pivot_vals[0]
+    cluster = [v for v in pivot_vals if abs(v - anchor) / anchor <= tolerance_pct]
+    if len(cluster) < min_touches:
+        return None
+    return float(sum(cluster) / len(cluster))
+
+
+def base_on_base(symbol: str, bars: Sequence[Bar]) -> Candidate | None:
+    """Detect a base-on-base continuation pattern.
+
+    Pipeline:
+      1. Find R1 — swing-high cluster in bars[-180:-90].
+      2. Confirm breakout — some bar between -90 and -50 closes ≥ R1×1.02.
+      3. Confirm price held — no close < R1×0.97 in last 90 bars.
+      4. Find R2 — swing-high cluster in last 90 bars.
+      5. R2 ≥ R1 × 1.05 (real step up).
+      6. Today's close within 5% below R2 (approaching the new pivot).
+    """
+    if not _passes_liquidity(bars):
+        return None
+    bars = list(bars[-LOOKBACK_BARS:])
+    if len(bars) < abs(BOB_PRIOR_START):
+        return None
+
+    highs = _highs(bars)
+    closes = _closes(bars)
+    lows = _lows(bars)
+    n = len(bars)
+
+    # Step 1: R1 from the prior base window.
+    r1 = _cluster_pivot(highs, n + BOB_PRIOR_START, n + BOB_PRIOR_END)
+    if r1 is None:
+        return None
+
+    # Step 2: at least one close in the breakout zone cleared R1.
+    breakout_slice = closes[n + BOB_PRIOR_END:n + BOB_BREAKOUT_END]
+    if len(breakout_slice) == 0 or float(breakout_slice.max()) < r1 * (1 + BOB_BREAKOUT_MARGIN):
+        return None
+
+    # Step 3: price never collapsed back below R1 by more than tolerance.
+    post_breakout_closes = closes[n + BOB_PRIOR_END:]
+    if float(post_breakout_closes.min()) < r1 * (1 - BOB_NO_FAIL_TOLERANCE):
+        return None
+
+    # Step 4: R2 from the current base window.
+    r2 = _cluster_pivot(highs, n - BOB_CURRENT_LEN, n)
+    if r2 is None:
+        return None
+
+    # Step 5: meaningful step up.
+    if r2 < r1 * (1 + BOB_MIN_STEP_UP_PCT):
+        return None
+
+    # Step 6: proximity to the new pivot.
+    last_close = float(closes[-1])
+    distance_pct = (r2 - last_close) / r2
+    if distance_pct < 0 or distance_pct > BOB_PROXIMITY_MAX:
+        return None
+
+    base_low = float(lows[-BOB_CURRENT_LEN:].min())
+    suggested_entry = round(r2 * 1.005, 2)
+    suggested_sl = round(base_low * 0.99, 2)
+
+    # Score: bigger step up + closer proximity = higher score.
+    step_up_pct = (r2 - r1) / r1 * 100
+    proximity_bonus = (1 - distance_pct / BOB_PROXIMITY_MAX) * 5
+    score = round(step_up_pct + proximity_bonus, 2)
+
+    return Candidate(
+        symbol=symbol,
+        scan_type="base_on_base",
+        score=score,
+        close=last_close,
+        suggested_entry=suggested_entry,
+        suggested_sl=suggested_sl,
+        extras={
+            "prior_base_level": round(r1, 2),
+            "current_base_level": round(r2, 2),
+            "step_up_pct": round(step_up_pct, 2),
+            "distance_pct": round(distance_pct * 100, 2),
+        },
+    )
+
+
 # -- Dispatch -----------------------------------------------------------------
 
 SCAN_TYPES = {
@@ -544,4 +760,6 @@ SCAN_TYPES = {
     "trendline_setup": ("Trendline Setup", trendline_setup),
     "tight_setup": ("Tight Setup", tight_setup),
     "tightness_trading": ("Tightness Trading", tightness_trading),
+    "institutional_buying": ("Institutional Buying", institutional_buying),
+    "base_on_base": ("Base on Base", base_on_base),
 }

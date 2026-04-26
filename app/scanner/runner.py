@@ -39,76 +39,67 @@ TOP_N_RESULTS = 100
 
 # -- Shared loader ----------------------------------------------------------
 
-# Liquidity floor for non-index names. Calibrated so genuine smallcap setups
-# like STYLAMIND (~₹14 cr/day) sail through, while penny / illiquid names get
-# dropped. Stricter than NSE's own Total Market criteria on price (we won't
-# scan sub-₹30 stocks) but looser on turnover.
-_NON_INDEX_MIN_TURNOVER_RS = 2_00_00_000   # ₹2 crore avg daily turnover
-_NON_INDEX_MIN_CLOSE_RS = 30.0
-_NON_INDEX_MIN_BARS = 30
-
 
 def _load_universe_and_bars(db: Session) -> tuple[list[str], dict[str, list]]:
-    """Resolve the gated universe and bulk-load bars for it.
+    """Resolve the scan universe and bulk-load bars for it.
 
-    Two-tier gate, designed so we never silently drop a real candidate just
-    because NSE hasn't included it in their index family:
+    Universe = every symbol in the bars cache, minus ETFs / debt funds.
+    No market-cap gate, no NSE-index-list gate. We trust:
 
-      1. **Always in:** every symbol in the NSE Total Market index that we
-         have bars for (~750 mid+ caps). These already pass NSE's liquidity
-         + free-float thresholds.
-      2. **Soft-included:** any other bars-cache symbol that clears a basic
-         liquidity floor — last close ≥ ₹{min_close}, 20-day avg turnover
-         ≥ ₹{min_turnover_cr} cr, ≥ {min_bars} bars of history.
+      1. The bhavcopy itself — only NSE-listed EQ + BE securities.
+      2. ``universe_mod.universe_from_cache`` — strips ETFs/BEES/liquid funds
+         by symbol regex + Kite instrument-name tokens.
+      3. The detectors — each has its own MIN_BARS / MIN_PRICE / MIN_ADV20_RS
+         quality gate (see ``patterns.py``), so a stock with 30 bars or
+         ₹50 lakh/day turnover gets filtered there, not here.
 
-    If the NSE index list can't be fetched at all, we fall back to the soft
-    gate alone (better to scan than not).
+    Removing the universe-level gate exposed real candidates that NSE's
+    Total Market index didn't include (e.g. STYLAMIND). The price is a
+    bigger inner loop, but at ~4500 symbols × 4 detectors the run still
+    completes in single-digit seconds.
     """
-    from . import index_universe as idx_uni
-
-    bars_universe = universe_mod.universe_from_cache(db)
-    bars_map = bars_cache.bars_by_symbol(db, bars_universe)
-
-    try:
-        index_set = idx_uni.qualified_symbols()
-    except Exception as exc:  # noqa: BLE001
-        log.warning("NSE index list fetch failed (%s); soft gate only", exc)
-        index_set = set()
-
-    kept: list[str] = []
-    for sym in bars_universe:
-        if sym in index_set:
-            kept.append(sym)
-            continue
-        bars = bars_map.get(sym) or []
-        if len(bars) < _NON_INDEX_MIN_BARS:
-            continue
-        last_close = bars[-1].close
-        if last_close < _NON_INDEX_MIN_CLOSE_RS:
-            continue
-        last_20 = bars[-20:]
-        avg_turnover = sum(b.close * b.volume for b in last_20) / len(last_20)
-        if avg_turnover < _NON_INDEX_MIN_TURNOVER_RS:
-            continue
-        kept.append(sym)
-
-    return kept, bars_map
+    symbols = universe_mod.universe_from_cache(db)
+    bars_map = bars_cache.bars_by_symbol(db, symbols)
+    return symbols, bars_map
 
 
 def gated_universe_breakdown(db: Session) -> dict:
-    """Used by /scanners to render an accurate universe-size headline. Same
-    rules as ``_load_universe_and_bars`` — kept in sync intentionally."""
-    syms, _bars = _load_universe_and_bars(db)
-    from . import index_universe as idx_uni
-    try:
-        index_set = idx_uni.qualified_symbols()
-    except Exception:  # noqa: BLE001
-        index_set = set()
-    in_index = sum(1 for s in syms if s in index_set)
+    """Funnel breakdown for the /scanners status panel — makes the
+    "0 candidates" failure mode visible instead of mysterious. Walks the
+    universe through every detector quality gate and counts survivors at
+    each step."""
+    from .patterns import MIN_ADV20_RS, MIN_BARS, MIN_PRICE
+
+    symbols = universe_mod.universe_from_cache(db)
+    bars_map = bars_cache.bars_by_symbol(db, symbols)
+
+    n_total = len(symbols)
+    n_have_bars = sum(1 for s in symbols if bars_map.get(s))
+    n_min_bars = 0
+    n_min_price = 0
+    n_min_adv20 = 0
+    for s in symbols:
+        bars = bars_map.get(s) or []
+        if len(bars) < MIN_BARS:
+            continue
+        n_min_bars += 1
+        if bars[-1].close < MIN_PRICE:
+            continue
+        n_min_price += 1
+        last20 = bars[-20:]
+        adv20 = sum(b.close * b.volume for b in last20) / len(last20)
+        if adv20 >= MIN_ADV20_RS:
+            n_min_adv20 += 1
+
     return {
-        "total": len(syms),
-        "in_index": in_index,
-        "soft_included": len(syms) - in_index,
+        "total": n_total,
+        "have_bars": n_have_bars,
+        "min_bars": n_min_bars,
+        "min_price": n_min_price,
+        "min_adv20": n_min_adv20,
+        "min_bars_threshold": MIN_BARS,
+        "min_price_threshold": MIN_PRICE,
+        "min_adv20_threshold_cr": MIN_ADV20_RS / 1e7,
     }
 
 

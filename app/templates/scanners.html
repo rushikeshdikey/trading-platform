@@ -34,7 +34,7 @@
   {% if rf_err %}<div class="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-sm"><strong>Market-cap refresh error:</strong> {{ rf_err }}</div>{% endif %}
   {% if err %}<div class="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-sm"><strong>Scan error:</strong> {{ err }}</div>{% endif %}
 
-  <!-- Compact status strip — bars + NSE index universe + refresh actions -->
+  <!-- Compact status strip — bars + scan universe + refresh actions -->
   <div class="card px-4 py-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs">
     <span class="flex items-center gap-1.5">
       <i data-lucide="database" class="w-3.5 h-3.5 text-zinc-400"></i>
@@ -47,20 +47,59 @@
       <i data-lucide="filter" class="w-3.5 h-3.5 text-zinc-400"></i>
       <span class="text-zinc-500">Scan universe</span>
       <span class="font-semibold tabular-nums">{{ idx_count }}</span>
-      {% if universe_breakdown %}<span class="text-zinc-400 text-[10px]" title="Nifty Total Market index ∪ liquid non-index names with bars">({{ universe_breakdown.in_index }} index + {{ universe_breakdown.soft_included }} liquid)</span>{% endif %}
+      <span class="text-zinc-400 text-[10px]">(bars cache, ETFs/funds excluded)</span>
     </span>
     <span class="ml-auto flex items-center gap-2">
       <form method="post" action="/scanners/refresh-bars" class="inline">
         <button class="btn btn-outline !py-1 !px-2 text-[11px]"><i data-lucide="refresh-cw"></i>Refresh bars</button>
       </form>
-      {# Refresh universe button intentionally hidden — NSE archives is flaky
-         from cloud IPs and pinned the workers once. Daily disk cache + lazy
-         fetch is enough; re-enable once we add proper retry / circuit breaker. #}
-      {# <form method="post" action="/scanners/refresh-index-universe" class="inline">
-        <button class="btn btn-outline !py-1 !px-2 text-[11px]"><i data-lucide="refresh-cw"></i>Refresh universe</button>
-      </form> #}
     </span>
   </div>
+
+  {# ============================================================
+     Diagnostic funnel — surfaces the "why 0 candidates" failure
+     mode. Each detector requires:
+       MIN_BARS  ≥ {{ universe_breakdown.min_bars_threshold }}
+       MIN_PRICE ≥ ₹{{ universe_breakdown.min_price_threshold }}
+       MIN_ADV20 ≥ ₹{{ universe_breakdown.min_adv20_threshold_cr }} cr / day
+     If the eligible count is tiny, refresh bars to deepen history.
+     ============================================================ #}
+  {% if universe_breakdown %}
+  {% set ub = universe_breakdown %}
+  <details class="card px-4 py-3" {% if ub.min_adv20 < 200 %}open{% endif %}>
+    <summary class="cursor-pointer text-xs font-semibold text-zinc-600 flex items-center gap-2">
+      <i data-lucide="filter" class="w-3.5 h-3.5"></i>Detector eligibility funnel
+      <span class="text-zinc-400 font-normal">— {{ ub.min_adv20 }} symbols clear all gates</span>
+      {% if ub.min_adv20 < 200 %}<span class="pill bg-amber-100 text-amber-800 border-amber-200 text-[10px]">low — refresh bars</span>{% endif %}
+    </summary>
+    <div class="mt-3 space-y-1.5 text-xs">
+      {% set steps = [
+        ("Bars cache (ETFs / funds excluded)", ub.total, "starting universe"),
+        ("Have ≥ " ~ ub.min_bars_threshold ~ " bars history",  ub.min_bars,  "needed for resistance touches / trendlines"),
+        ("+ Last close ≥ ₹" ~ ('%.0f'|format(ub.min_price_threshold)),  ub.min_price, "no penny stocks"),
+        ("+ 20-day avg turnover ≥ ₹" ~ ('%.0f'|format(ub.min_adv20_threshold_cr)) ~ " cr",  ub.min_adv20, "you can actually exit a position"),
+      ] %}
+      {% for label, count, note in steps %}
+      <div class="flex items-center gap-3">
+        <div class="w-72 text-zinc-700">{{ label }}</div>
+        <div class="flex-1 h-1.5 bg-zinc-100 rounded-full overflow-hidden">
+          <div class="h-full rounded-full {% if loop.last and count < 200 %}bg-amber-500{% else %}bg-emerald-500{% endif %}"
+               style="width: {{ (count / ub.total * 100) if ub.total else 0 }}%"></div>
+        </div>
+        <div class="w-14 text-right tabular-nums font-semibold">{{ '{:,}'.format(count) }}</div>
+        <div class="w-72 text-[10px] text-zinc-400">{{ note }}</div>
+      </div>
+      {% endfor %}
+    </div>
+    {% if ub.min_adv20 < 200 %}
+    <div class="mt-3 text-xs text-amber-800 bg-amber-50 border border-amber-200 px-3 py-2 rounded">
+      <strong>Why scanners return 0:</strong> only {{ ub.min_adv20 }} symbols pass the per-detector quality gate.
+      Most likely the bars cache history is shallow — click <strong>Refresh bars</strong> and wait 5-15 min,
+      then this funnel should show 1000+ at the bottom.
+    </div>
+    {% endif %}
+  </details>
+  {% endif %}
   {% if cache.rows == 0 %}<div class="text-xs text-amber-700 bg-amber-50 border border-amber-200 px-3 py-2 rounded">Cold start: first <strong>Refresh bars</strong> pulls ~180 days for both exchanges (slow).</div>{% endif %}
   {% if idx_count == 0 %}<div class="text-xs text-amber-700 bg-amber-50 border border-amber-200 px-3 py-2 rounded">NSE universe not loaded yet — click <strong>Refresh universe</strong> (one HTTP call, &lt;1s).</div>{% endif %}
 
@@ -462,6 +501,8 @@
           {% elif st.key == 'trendline_setup' %}<i data-lucide="trending-up" class="w-4 h-4 text-zinc-500"></i>
           {% elif st.key == 'tight_setup' %}<i data-lucide="minimize-2" class="w-4 h-4 text-zinc-500"></i>
           {% elif st.key == 'tightness_trading' %}<i data-lucide="target" class="w-4 h-4 text-zinc-500"></i>
+          {% elif st.key == 'institutional_buying' %}<i data-lucide="building-2" class="w-4 h-4 text-zinc-500"></i>
+          {% elif st.key == 'base_on_base' %}<i data-lucide="layers-2" class="w-4 h-4 text-zinc-500"></i>
           {% endif %}
           <h3 class="font-semibold">{{ st.label }}</h3>
         </div>
@@ -470,6 +511,8 @@
           {% elif st.key == 'trendline_setup' %}Rising trendline through ≥ 3 swing lows, R² ≥ 0.92, price within 3% of line today.
           {% elif st.key == 'tight_setup' %}ATR(14)/close < 2.5%, 20-bar range < 10%, ATR contracting vs ATR(50).
           {% elif st.key == 'tightness_trading' %}5-phase Ankur Patel setup: strong upmove (≥30%) → base → low-vol dry-up → tight range (≤6%) → buy points A/B.
+          {% elif st.key == 'institutional_buying' %}Smart-money accumulation — ≥ 6 up-days on volume ≥ 1.25× 50-DMA in last 25 bars, in confirmed uptrend (price &gt; 50-DMA, +5% over 25 bars).
+          {% elif st.key == 'base_on_base' %}Continuation pattern — prior base broke out, price held above the breakout level, new base now sitting ≥ 3% above the first; close within 7% below new pivot.
           {% endif %}
         </p>
         <div class="mt-4 flex items-center justify-between gap-2">
@@ -620,6 +663,10 @@
                 <th>Base high</th><th>Base low</th><th>ATR%</th><th>Range%</th>
               {% elif selected_scan.key == 'tightness_trading' %}
                 <th>Upmove</th><th>Drawdown</th><th>Tight range</th><th>Vol dry-up</th><th>Buy B</th>
+              {% elif selected_scan.key == 'institutional_buying' %}
+                <th>Accum days</th><th>Distrib</th><th>Net</th><th>25b gain</th><th>Last accum</th>
+              {% elif selected_scan.key == 'base_on_base' %}
+                <th>Prior base (R1)</th><th>Current base (R2)</th><th>Step up</th><th>Distance</th>
               {% endif %}
               <th>Entry</th><th>SL</th><th>Qty (0.25% / 0.5%)</th><th>Risk ₹ (0.25% / 0.5%)</th><th class="text-right">Actions</th>
             </tr>
@@ -659,6 +706,17 @@
                   <td class="tabular-nums">{{ c.extras.tight_range_pct }}%</td>
                   <td class="tabular-nums text-sky-700">{{ c.extras.vol_dryup_pct }}%</td>
                   <td class="tabular-nums">₹{{ c.extras.buy_point_b }}</td>
+                {% elif selected_scan.key == 'institutional_buying' %}
+                  <td class="tabular-nums text-emerald-700">{{ c.extras.accum_days }}</td>
+                  <td class="tabular-nums text-rose-600">{{ c.extras.distrib_days }}</td>
+                  <td class="tabular-nums font-semibold">{{ c.extras.net_days }}</td>
+                  <td class="tabular-nums">+{{ c.extras.gain_25b_pct }}%</td>
+                  <td class="text-xs text-zinc-500">{{ c.extras.last_accum_date or '—' }}</td>
+                {% elif selected_scan.key == 'base_on_base' %}
+                  <td class="tabular-nums">₹{{ c.extras.prior_base_level }}</td>
+                  <td class="tabular-nums font-semibold">₹{{ c.extras.current_base_level }}</td>
+                  <td class="tabular-nums text-emerald-700">+{{ c.extras.step_up_pct }}%</td>
+                  <td class="tabular-nums text-amber-700">{{ c.extras.distance_pct }}%</td>
                 {% endif %}
                 <td class="tabular-nums font-semibold">₹{{ '{:,.2f}'.format(c.suggested_entry) }}</td>
                 <td class="tabular-nums text-rose-700">₹{{ '{:,.2f}'.format(c.suggested_sl) }}</td>

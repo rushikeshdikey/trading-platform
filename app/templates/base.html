@@ -52,8 +52,12 @@
       body { font-family: 'Inter var', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
     }
 
-    /* Nav */
-    .nav-link {
+    /* Nav.
+       :where() drops the selector specificity to 0 so Tailwind's `.hidden`
+       and `.md:inline-flex` (both specificity 0,1,0) win over us cleanly.
+       Without this, .nav-link's display:inline-flex was clobbering `hidden`
+       on mobile and the desktop nav showed on phones. */
+    :where(.nav-link) {
       display: inline-flex; align-items: center; gap: 0.4rem;
       padding: 0.45rem 0.75rem; border-radius: calc(var(--radius) - 0.15rem);
       color: var(--muted-foreground); font-weight: 500; font-size: 0.875rem;
@@ -102,14 +106,16 @@
     table.jrnl tbody tr:last-child td { border-bottom: none; }
 
     /* Pills — shadcn-style subtle badges */
-    .pill {
+    /* Same :where() trick as .nav-link — keep `hidden` working when
+       these classes are combined with Tailwind responsive utilities. */
+    :where(.pill) {
       display: inline-flex; align-items: center; gap: 4px;
       padding: 2px 8px; font-size: 11px; font-weight: 500;
       border-radius: 9999px; border: 1px solid transparent;
     }
 
     /* Buttons — black primary (shadcn signature), outline/ghost variants */
-    .btn {
+    :where(.btn) {
       display: inline-flex; align-items: center; justify-content: center; gap: 0.45rem;
       padding: 0.5rem 0.9rem; border-radius: calc(var(--radius) - 0.1rem);
       font-weight: 500; font-size: 0.875rem; line-height: 1;
@@ -274,6 +280,9 @@
             </a>
             <a href="/sector-rotation" class="{{ _link_class }} {% if path.startswith('/sector-rotation') %}{{ _active_class }}{% endif %}">
               <i data-lucide="git-compare-arrows" class="w-5 h-5"></i>Sector rotation
+            </a>
+            <a href="/scanners/ipos" class="{{ _link_class }} {% if path == '/scanners/ipos' %}{{ _active_class }}{% endif %}">
+              <i data-lucide="sparkles" class="w-5 h-5"></i>Recent IPOs
             </a>
             <div class="border-t border-zinc-100 my-2"></div>
             <a href="/import" class="{{ _link_class }} {% if path.startswith('/import') %}{{ _active_class }}{% endif %}">
@@ -535,6 +544,10 @@
         { label: 'Watchlist',         hint: 'Saved tickers + alerts',           url: '/watchlist',      icon: 'bookmark',         section: 'Page' },
         { label: 'Breadth',           hint: 'NSE adv/dec + market mood',        url: '/breadth',        icon: 'activity',         section: 'Page' },
         { label: 'Sector Rotation',   hint: 'RRG: which sectors are leading',   url: '/sector-rotation', icon: 'git-compare-arrows', section: 'Page' },
+        { label: 'Recent IPOs',       hint: 'Listings from the last 4 quarters', url: '/scanners/ipos',   icon: 'sparkles',          section: 'Page' },
+        // New scanners
+        { label: 'Institutional Buying scan', hint: 'Smart-money accumulation days', url: '/scanners',   icon: 'building-2',        section: 'Scanner' },
+        { label: 'Base on Base scan',         hint: 'Two-stage continuation pattern', url: '/scanners',  icon: 'layers-2',          section: 'Scanner' },
         { label: 'Lists',             hint: 'Setup / proficiency / growth',     url: '/masterlist',     icon: 'list-checks',      section: 'Page' },
         { label: 'Import',            hint: 'Upload xlsx',                      url: '/import',         icon: 'upload',           section: 'Page' },
         { label: 'Settings',          hint: 'Capital, risk %, Kite',            url: '/settings',       icon: 'settings',         section: 'Page' },

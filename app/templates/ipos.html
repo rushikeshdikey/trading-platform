@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% block title %}Recent IPOs · Trading Journal{% endblock %}
+{% block content %}
+<div class="max-w-7xl mx-auto space-y-6">
+
+  <div class="flex items-start justify-between flex-wrap gap-3">
+    <div>
+      <h1 class="text-2xl font-semibold tracking-tight">Recent IPOs</h1>
+      <p class="text-zinc-500 text-sm mt-1 max-w-3xl">
+        Stocks with fewer than {{ max_bars }} cached daily bars — these started
+        trading after the cache's earliest day, so they're likely recent IPOs.
+        They don't yet have the 120-bar history the scanner detectors require,
+        but they're often the most volatile / opportunity-rich names on the
+        board — track them manually here. (To surface listings older than ~6
+        months we'd need a longer-history bars cache or NSE corporate actions feed.)
+      </p>
+    </div>
+    <div class="text-xs text-zinc-500 tabular-nums">
+      Bars latest {{ cache.latest_date or '—' }} · {{ entries|length }} listings
+    </div>
+  </div>
+
+  {% if not entries %}
+  <div class="card p-6 text-sm text-zinc-500">
+    No newly-listed stocks in the cache yet. If you've just bootstrapped the
+    bars cache, every symbol will look "new" — wait for ~30 days of operation
+    before this list becomes meaningful.
+  </div>
+  {% else %}
+  <div class="card overflow-hidden"
+       x-data='{ q: "", sortKey: "listed_on", sortDir: -1,
+                 norm(s){ return (s||"").toString().toLowerCase(); },
+                 sortBy(k){ if (this.sortKey === k) this.sortDir *= -1; else { this.sortKey = k; this.sortDir = -1; } } }'>
+
+    <div class="card-header flex items-center gap-3 flex-wrap">
+      <div class="card-title flex items-center gap-2">
+        <i data-lucide="sparkles" class="w-4 h-4 text-zinc-500"></i>
+        IPO listings — past {{ lookback_days }} days
+      </div>
+      <input type="search" x-model="q" placeholder="Filter by symbol…"
+             class="ml-auto px-3 py-1.5 text-sm border border-zinc-200 rounded-md w-56">
+    </div>
+
+    <div class="overflow-x-auto">
+      <table class="jrnl">
+        <thead>
+          <tr>
+            <th class="cursor-pointer" @click="sortBy('symbol')">Symbol</th>
+            <th class="cursor-pointer" @click="sortBy('listed_on')">Listed on</th>
+            <th class="cursor-pointer text-right" @click="sortBy('days_listed')">Days</th>
+            <th class="text-right">First open</th>
+            <th class="cursor-pointer text-right" @click="sortBy('last_close')">Close</th>
+            <th class="cursor-pointer text-right" @click="sortBy('pct_change')">vs IPO</th>
+            <th class="text-right">High since</th>
+            <th class="cursor-pointer text-right" @click="sortBy('pct_from_high')">From high</th>
+            <th class="text-right whitespace-nowrap">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for e in entries %}
+          <tr x-show="!q || norm('{{ e.symbol }}').includes(norm(q))"
+              data-symbol="{{ e.symbol }}"
+              data-listed-on="{{ e.listed_on.toordinal() if e.listed_on else 0 }}"
+              data-days-listed="{{ e.days_listed }}"
+              data-last-close="{{ e.last_close }}"
+              data-pct-change="{{ e.pct_change }}"
+              data-pct-from-high="{{ e.pct_from_high }}">
+            <td class="font-semibold">{{ e.symbol }}</td>
+            <td class="tabular-nums text-xs text-zinc-600">{{ e.listed_on }}</td>
+            <td class="tabular-nums text-right text-xs">{{ e.days_listed }}d</td>
+            <td class="tabular-nums text-right">₹{{ '{:,.2f}'.format(e.ipo_open) }}</td>
+            <td class="tabular-nums text-right font-semibold">₹{{ '{:,.2f}'.format(e.last_close) }}</td>
+            <td class="tabular-nums text-right {% if e.pct_change >= 0 %}text-emerald-700{% else %}text-rose-700{% endif %}">
+              {{ '%+.1f'|format(e.pct_change) }}%
+            </td>
+            <td class="tabular-nums text-right text-zinc-500">₹{{ '{:,.2f}'.format(e.high_since) }}</td>
+            <td class="tabular-nums text-right text-amber-700">{{ '%+.1f'|format(e.pct_from_high) }}%</td>
+            <td class="text-right whitespace-nowrap">
+              <a class="btn btn-outline !py-1 !px-2 text-xs"
+                 href="https://www.tradingview.com/chart/?symbol=NSE:{{ e.symbol }}"
+                 target="_blank" rel="noopener">
+                <i data-lucide="line-chart"></i>
+              </a>
+              <form method="post" action="/watchlist/add" class="inline">
+                <input type="hidden" name="symbol" value="{{ e.symbol }}">
+                <input type="hidden" name="setup_label" value="IPO {{ e.listed_on }}">
+                <input type="hidden" name="alert_price" value="{{ e.last_close }}">
+                <input type="hidden" name="notes" value="Listed {{ e.listed_on }}, IPO open ₹{{ e.ipo_open }}, currently {{ '%+.1f'|format(e.pct_change) }}% from open">
+                <input type="hidden" name="return_to" value="/scanners/ipos">
+                <button class="btn btn-ghost !py-1 !px-2 text-xs" title="Save to watchlist">
+                  <i data-lucide="bookmark"></i>
+                </button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <script>
+      // Client-side sort — same trick as the unified scanner.
+      // Re-orders <tr> nodes after each sortBy click using data-* attrs.
+      (function () {
+        const card = document.currentScript.closest('.card');
+        const tbody = card.querySelector('tbody');
+        const headers = card.querySelectorAll('th[\\@click]');
+        function read(tr, key) {
+          const v = tr.dataset[key.replace(/_/g, '')] || tr.dataset[key];
+          if (key === 'symbol') return v;
+          return parseFloat(v) || 0;
+        }
+        function sort(key, dir) {
+          const rows = Array.from(tbody.querySelectorAll('tr'));
+          rows.sort((a, b) => {
+            const va = read(a, key), vb = read(b, key);
+            return va < vb ? -1 * dir : va > vb ? 1 * dir : 0;
+          });
+          rows.forEach(r => tbody.appendChild(r));
+        }
+        // Hook into Alpine's sortKey/sortDir reactivity by polling on click.
+        card.addEventListener('click', (e) => {
+          const th = e.target.closest('th[\\@click]'); if (!th) return;
+          // Read Alpine state via $data on the parent.
+          requestAnimationFrame(() => {
+            const data = card._x_dataStack ? card._x_dataStack[0] : null;
+            if (data) sort(data.sortKey, data.sortDir);
+          });
+        });
+      })();
+    </script>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

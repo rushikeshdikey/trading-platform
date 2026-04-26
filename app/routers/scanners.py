@@ -224,6 +224,25 @@ def refresh_index_universe(request: Request):
     return RedirectResponse(url=f"/scanners?idx_refresh={msg}", status_code=303)
 
 
+@router.get("/ipos", response_class=HTMLResponse)
+def ipos_page(request: Request, db: Session = Depends(get_db)):
+    """Stocks listed in the last 4 quarters — surfaces fresh IPOs the
+    scanners can't see yet (their detectors need 120 bars of history)."""
+    from ..scanner import ipos as ipos_svc
+
+    entries = ipos_svc.recent_ipos(db)
+    cache = _bars_cache_size(db)
+    return templates.TemplateResponse(
+        request,
+        "ipos.html",
+        {
+            "entries": entries,
+            "cache": cache,
+            "max_bars": ipos_svc.IPO_MAX_BARS,
+        },
+    )
+
+
 @router.post("/refresh-bars", response_class=HTMLResponse)
 def refresh_bars(request: Request, db: Session = Depends(get_db)):
     """Kick off a bhavcopy refresh in a daemon thread and return immediately.
