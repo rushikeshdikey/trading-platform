@@ -67,7 +67,9 @@ def _load_universe_and_bars(db: Session) -> tuple[list[str], dict[str, list]]:
 
 
 _breakdown_cache: dict = {"at": 0.0, "value": None}
-_BREAKDOWN_TTL_S = 300  # 5 minutes — funnel doesn't change minute-to-minute
+# Underlying bars cache only changes once a day (EOD pre-warm at 15:35 IST).
+# 30 min TTL is conservative even when Refresh-bars is mid-flight.
+_BREAKDOWN_TTL_S = 1800
 
 
 def gated_universe_breakdown(db: Session) -> dict:

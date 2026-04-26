@@ -170,6 +170,37 @@ def _maybe_bootstrap_bars_cache() -> None:
 _maybe_bootstrap_bars_cache()
 
 
+def _prewarm_scanners_in_background() -> None:
+    """Compute the /scanners funnel diagnostic in a daemon thread at boot.
+
+    Without this, the FIRST user request to /scanners after every deploy
+    hits a cold cache and takes 5-15 s while the worker iterates ~4500
+    symbols × 252 bars to count detector-eligibility gates. With this,
+    that work happens off the request path and the cache is hot before
+    the first user lands. After 30 min, recomputed lazily on next hit.
+    """
+    def _warm() -> None:
+        try:
+            from .scanner import runner as r
+            with SessionLocal() as db:
+                r.gated_universe_breakdown(db)
+            import logging
+            logging.getLogger("journal.bootstrap").info(
+                "scanners funnel pre-warmed at startup",
+            )
+        except Exception as exc:  # noqa: BLE001
+            import logging
+            logging.getLogger("journal.bootstrap").warning(
+                "scanners pre-warm failed (non-fatal): %s", exc,
+            )
+
+    import threading
+    threading.Thread(target=_warm, daemon=True).start()
+
+
+_prewarm_scanners_in_background()
+
+
 @app.get("/api/status")
 def api_status(user=Depends(require_user)):
     """Lightweight status summary consumed by the global nav strip."""
