@@ -1,6 +1,7 @@
 from datetime import date, datetime
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     Date,
     DateTime,
@@ -231,7 +232,10 @@ class DailyBar(Base):
     high: Mapped[float] = mapped_column(Float, nullable=False)
     low: Mapped[float] = mapped_column(Float, nullable=False)
     close: Mapped[float] = mapped_column(Float, nullable=False)
-    volume: Mapped[int] = mapped_column(Integer, default=0)
+    # BigInteger because Indian high-volume names (ETFs, micro-caps) can
+    # post >2.1B daily volume — overflows Postgres INT32. SQLite stores
+    # ints as 64-bit always so local doesn't notice; prod hits this.
+    volume: Mapped[int] = mapped_column(BigInteger, default=0)
 
 
 class Watchlist(Base):
