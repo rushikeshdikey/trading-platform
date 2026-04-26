@@ -134,9 +134,27 @@ def start() -> BackgroundScheduler | None:
         coalesce=True,  # if missed (e.g. machine asleep), only run once
         replace_existing=True,
     )
+
+    # Every-minute health probe — drives the public /status page.
+    # Gaps in the recorded rows = "app was down, scheduler couldn't write"
+    # = visible downtime on the timeline.
+    from . import health_monitor as hm
+    from apscheduler.triggers.interval import IntervalTrigger
+    sched.add_job(
+        hm.probe_and_log,
+        IntervalTrigger(seconds=hm.PROBE_INTERVAL_S),
+        id="health_probe",
+        max_instances=1,
+        coalesce=True,
+        replace_existing=True,
+    )
+
     sched.start()
     _scheduler = sched
-    log.info("scheduler started: eod_prewarm at 15:35 IST mon-fri")
+    log.info(
+        "scheduler started: eod_prewarm 15:35 IST mon-fri, health_probe every %ds",
+        hm.PROBE_INTERVAL_S,
+    )
     return sched
 
 

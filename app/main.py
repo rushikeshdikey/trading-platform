@@ -33,6 +33,7 @@ from .routers import (  # noqa: E402
     sector_rotation as sector_rotation_router,
     settings_routes,
     sizing,
+    status as status_router,
     trades,
     users as users_router,
     watchlist,
@@ -235,6 +236,10 @@ def health():
 # Public auth routes (login/setup/logout/change-password). These define their
 # own dependencies internally where needed.
 app.include_router(users_router.router)
+
+# Public /status page — no auth, intentionally. Even if login is broken,
+# this URL works from the outside so users can see whether the app is up.
+app.include_router(status_router.router)
 
 
 # Every other router gets gated globally. Adding `require_user` here means

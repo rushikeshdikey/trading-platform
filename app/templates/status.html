@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Status · Trading Journal</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="stylesheet" href="/static/app.css">
+  <style>
+    body {
+      font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+      background: #fafafa; color: #18181b;
+      -webkit-font-smoothing: antialiased;
+      margin: 0; padding: 2rem 1rem;
+    }
+    .wrap { max-width: 880px; margin: 0 auto; }
+    .header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem; margin-bottom: 2rem; }
+    .header h1 { font-size: 1.5rem; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+    .banner { padding: 1.25rem 1.5rem; border-radius: 0.75rem; font-weight: 600; font-size: 1.05rem; margin-bottom: 2rem; }
+    .banner.up   { background: #d1fae5; color: #065f46; border: 1px solid #6ee7b7; }
+    .banner.down { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
+    .panel { background: #fff; border: 1px solid #e4e4e7; border-radius: 0.75rem; padding: 1.5rem; margin-bottom: 1.5rem; }
+    .panel h2 { font-size: 0.875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: #71717a; margin: 0 0 0.5rem; }
+    .panel .subtitle { font-size: 0.75rem; color: #a1a1aa; margin: 0 0 1rem; }
+    .uptime-num { font-size: 2rem; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+    .uptime-num.green { color: #059669; }
+    .uptime-num.amber { color: #d97706; }
+    .uptime-num.red   { color: #dc2626; }
+    .timeline { display: flex; gap: 1px; align-items: stretch; height: 36px; }
+    .slot {
+      flex: 1; min-width: 2px; border-radius: 1px;
+      transition: opacity 0.15s;
+    }
+    .slot:hover { opacity: 0.7; cursor: help; }
+    .slot.green   { background: #10b981; }
+    .slot.amber   { background: #f59e0b; }
+    .slot.red     { background: #ef4444; }
+    .slot.no-data { background: #e4e4e7; }
+    .timeline-axis { display: flex; justify-content: space-between; margin-top: 0.5rem; font-size: 0.7rem; color: #a1a1aa; }
+    .legend { display: flex; gap: 1rem; margin-top: 1rem; font-size: 0.75rem; color: #71717a; }
+    .legend-item { display: flex; align-items: center; gap: 0.4rem; }
+    .legend-dot { width: 10px; height: 10px; border-radius: 2px; }
+    .timeline-7d .slot { border-radius: 4px; }
+    .timeline-7d { gap: 6px; height: 56px; }
+    .latency { font-size: 0.875rem; color: #52525b; }
+    .footer { text-align: center; color: #a1a1aa; font-size: 0.75rem; margin-top: 2rem; }
+    .footer a { color: #52525b; text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="header">
+      <h1>Trading Journal · Status</h1>
+      <a href="/cockpit" style="font-size: 0.875rem; color: #52525b; text-decoration: underline;">Open app →</a>
+    </div>
+
+    {% if summary.latest_at and summary.latest_ok %}
+    <div class="banner up">All systems operational</div>
+    {% elif summary.latest_at %}
+    <div class="banner down">Service is currently degraded</div>
+    {% else %}
+    <div class="banner up" style="background: #f4f4f5; color: #71717a; border-color: #e4e4e7;">No probe data yet — app just started up.</div>
+    {% endif %}
+
+    <div class="panel">
+      <h2>Last 24 hours</h2>
+      <p class="subtitle">5-minute buckets · {{ summary.total_probes_24h }} probes recorded · {{ summary.total_failures_24h }} failures</p>
+      <div style="display: flex; align-items: baseline; gap: 1rem; margin-bottom: 1rem;">
+        <span class="uptime-num {% if summary.uptime_24h_pct >= 99 %}green{% elif summary.uptime_24h_pct >= 95 %}amber{% else %}red{% endif %}">{{ '%.2f'|format(summary.uptime_24h_pct) }}%</span>
+        <span class="latency">
+          {% if summary.latest_response_ms is not none %}
+            Last probe: {{ summary.latest_response_ms }}ms · {{ summary.latest_at.strftime('%H:%M UTC') }}
+          {% endif %}
+        </span>
+      </div>
+      <div class="timeline">
+        {% for slot in summary.slots_24h %}
+          <div class="slot {{ slot.color }}" title="{{ slot.label }} · {% if slot.no_data %}no data (likely down){% else %}{{ slot.ok_count }} ok / {{ slot.fail_count }} fail{% if slot.avg_ms is not none %} · {{ slot.avg_ms }}ms avg{% endif %}{% endif %}"></div>
+        {% endfor %}
+      </div>
+      <div class="timeline-axis">
+        <span>24h ago</span>
+        <span>now</span>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Last 7 days</h2>
+      <p class="subtitle">Daily buckets · uptime over the rolling week</p>
+      <div style="display: flex; align-items: baseline; gap: 1rem; margin-bottom: 1rem;">
+        <span class="uptime-num {% if summary.uptime_7d_pct >= 99 %}green{% elif summary.uptime_7d_pct >= 95 %}amber{% else %}red{% endif %}">{{ '%.2f'|format(summary.uptime_7d_pct) }}%</span>
+      </div>
+      <div class="timeline timeline-7d">
+        {% for slot in summary.slots_7d %}
+          <div class="slot {{ slot.color }}" title="{{ slot.label }} · {% if slot.no_data %}no data{% else %}{{ slot.ok_count }} ok / {{ slot.fail_count }} fail{% endif %}"></div>
+        {% endfor %}
+      </div>
+      <div class="timeline-axis">
+        {% for slot in summary.slots_7d %}<span>{{ slot.label }}</span>{% endfor %}
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Legend</h2>
+      <div class="legend">
+        <div class="legend-item"><span class="legend-dot" style="background:#10b981"></span> All probes ok</div>
+        <div class="legend-item"><span class="legend-dot" style="background:#f59e0b"></span> Some failures</div>
+        <div class="legend-item"><span class="legend-dot" style="background:#ef4444"></span> Mostly failed</div>
+        <div class="legend-item"><span class="legend-dot" style="background:#e4e4e7"></span> No data (app down)</div>
+      </div>
+    </div>
+
+    <p class="footer">Auto-probed every 60 seconds · <a href="/health">/health</a> JSON</p>
+  </div>
+</body>
+</html>

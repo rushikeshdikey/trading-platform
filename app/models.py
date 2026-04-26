@@ -171,6 +171,23 @@ class ImportedExecution(Base):
     imported_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class HealthCheck(Base):
+    """One row per scheduled internal /health probe.
+
+    Drives the public /status page — lets users see uptime/downtime over
+    the last 24h. Gaps in the timeline (no rows) implicitly mean the app
+    was down for that minute (the scheduler couldn't write either).
+    """
+
+    __tablename__ = "health_check"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    checked_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    ok: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    response_ms: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
 class MarketBreadth(Base):
     """One row per trading day per universe — aggregated breadth stats."""
 
