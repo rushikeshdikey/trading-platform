@@ -85,6 +85,44 @@ def scanners_home(request: Request, db: Session = Depends(get_db)):
     )
 
 
+# Conviction tier thresholds. Single source of truth so tuning is one edit.
+_TIER_APLUS_MIN_SCANS = 3
+_TIER_A_SOLO_RS_FLOOR = 70
+_TIER_A_SOLO_SCORE_FLOOR = 60
+_MINERVINI_SCAN_TYPE = "minervini_trend_template"
+
+
+def _compute_tier(scans: list[dict], primary) -> tuple[str, str]:
+    """Decide conviction tier (A+ / A / B) for one symbol's roll-up.
+
+    Rule:
+      A+  — at least 3 scanners agree (rare; multiple independent signals).
+      A   — 2 scanners agree, OR a Minervini Trend Template hit (already an
+            8-criteria Stage 2 filter), OR a single scan with score ≥ 60 AND
+            RS Rating ≥ 70 (a strong-leader solo signal).
+      B   — everything else.
+
+    Returns (tier, reason) where ``reason`` is a short human-readable
+    explanation usable as a tooltip.
+    """
+    n = len(scans)
+    if n >= _TIER_APLUS_MIN_SCANS:
+        return "A+", f"{n} scanners agree"
+    if n >= 2:
+        return "A", f"{n} scanners agree"
+    has_minervini = any(s["type"] == _MINERVINI_SCAN_TYPE for s in scans)
+    if has_minervini:
+        return "A", "Minervini Stage 2 leader"
+    rs = (primary.extras or {}).get("rs_rating")
+    if (
+        primary.score >= _TIER_A_SOLO_SCORE_FLOOR
+        and rs is not None
+        and rs >= _TIER_A_SOLO_RS_FLOOR
+    ):
+        return "A", f"strong solo (score {primary.score:.0f}, RS {rs})"
+    return "B", "single scanner"
+
+
 def _build_unified_results(db: Session) -> dict | None:
     """Read ScanCache for all 4 scans and build a unified row list keyed by
     symbol — symbols hitting multiple scans get pills for each."""
@@ -140,6 +178,7 @@ def _build_unified_results(db: Session) -> dict | None:
     for sym, slot in grouped.items():
         c = slot["primary"]
         sizing = _size_one(db, c, capital=capital, risk_low=risk_low, risk_high=risk_high)
+        tier, tier_reason = _compute_tier(slot["scans"], c)
         out_rows.append({
             "symbol": sym,
             "scans": sorted(slot["scans"], key=lambda s: s["score"], reverse=True),
@@ -148,11 +187,8 @@ def _build_unified_results(db: Session) -> dict | None:
             "sizing": sizing,
             "on_watchlist": sym in on_watchlist,
             "sparkline": sparklines.get(sym, ""),
-            # Conviction tier: 2+ scans = A+, single scan A if score >= 60, else B
-            "tier": (
-                "A+" if len(slot["scans"]) >= 2
-                else ("A" if c.score >= 60 else "B")
-            ),
+            "tier": tier,
+            "tier_reason": tier_reason,
         })
     out_rows.sort(key=lambda r: (r["scan_count"], r["primary"].score), reverse=True)
 

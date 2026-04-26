@@ -350,7 +350,7 @@
                 data-setups="{% for sc in row.scans %}{{ sc.type }}{% if not loop.last %},{% endif %}{% endfor %}">
               <td><input type="checkbox" :checked="selected.has('{{ c.symbol }}')" @change="toggle('{{ c.symbol }}')" class="rounded border-zinc-300"></td>
               <td>
-                <span class="pill text-xs font-bold border
+                <span title="{{ row.tier_reason }}" class="pill text-xs font-bold border cursor-help
                   {% if row.tier == 'A+' %}bg-emerald-100 text-emerald-800 border-emerald-300
                   {% elif row.tier == 'A' %}bg-emerald-50 text-emerald-700 border-emerald-200
                   {% else %}bg-zinc-100 text-zinc-700 border-zinc-200{% endif %}">{{ row.tier }}</span>
@@ -421,7 +421,7 @@
                    class="mt-1 rounded border-zinc-300 w-5 h-5">
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-2 mb-0.5 flex-wrap">
-                <span class="pill text-[11px] font-bold border
+                <span title="{{ row.tier_reason }}" class="pill text-[11px] font-bold border
                   {% if row.tier == 'A+' %}bg-emerald-100 text-emerald-800 border-emerald-300
                   {% elif row.tier == 'A' %}bg-emerald-50 text-emerald-700 border-emerald-200
                   {% else %}bg-zinc-100 text-zinc-700 border-zinc-200{% endif %}">{{ row.tier }}</span>
