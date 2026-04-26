@@ -146,17 +146,12 @@ def _detect_one(
         if c is None:
             continue
 
-        # Apply tight-SL gate uniformly across all detectors. The user's
-        # psychology requires ≤2.5% risk per trade; structurally-wider
-        # setups get rejected here regardless of how strong the pattern is.
-        # This makes "no discretion" a system property, not a detector author's
-        # preference.
+        # Replace each detector's home-grown SL with a unified picker —
+        # PDL by default (the canonical Indian swing SL), or a tighter
+        # 3-bar-low / 2×ATR(7) stop when the chart genuinely allows it.
+        # Never rejects the candidate — the trader sees the SL% and
+        # decides per-trade whether to take it.
         sl = tsl.compute_tight_sl(bars, c.suggested_entry or c.close)
-        if sl.price is None:
-            # Trade auto-rejected — record the reason in case we want
-            # to debug later, but don't surface to the user.
-            log.debug("tight-SL reject %s/%s: %s", scan_type, sym, sl.rejected_reason)
-            continue
         c.suggested_sl = sl.price
         c.extras["sl_method"] = sl.method
         c.extras["sl_pct"] = round(sl.sl_pct * 100, 2)
