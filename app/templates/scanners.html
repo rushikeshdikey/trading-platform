@@ -30,6 +30,34 @@
   {% if refresh == 'started' %}<div class="p-3 rounded-lg bg-sky-50 border border-sky-200 text-sky-800 text-sm"><strong>Bars refresh started in background.</strong> Pulling up to 380 days from NSE + BSE (≈ 252 trading bars — needed for Minervini Trend Template). First run on a shallow cache takes 20-40 minutes. Reload the page to see the Bars count tick up.</div>
   {% elif refresh == 'already_running' %}<div class="p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm"><strong>Bars refresh already running.</strong> Wait for it to finish before kicking off another.</div>
   {% elif refresh %}<div class="p-3 rounded-lg bg-sky-50 border border-sky-200 text-sky-800 text-sm"><strong>Bars cache refreshed:</strong> <span class="tabular-nums">{{ refresh }}</span></div>{% endif %}
+
+  {# Live refresh state — shows whether a backfill is currently running,
+     when it last ran, and whether it errored. Critical when prod's
+     bars cache isn't catching up despite repeated Refresh-bars clicks
+     (almost always because deploys keep restarting the app container
+     and killing the in-flight refresh thread). #}
+  {% if bars_refresh_state and (bars_refresh_state.running or bars_refresh_state.last_summary or bars_refresh_state.last_error) %}
+  <div class="p-3 rounded-lg text-xs flex items-center gap-3 flex-wrap
+              {% if bars_refresh_state.running %}bg-sky-50 border border-sky-200 text-sky-800
+              {% elif bars_refresh_state.last_error %}bg-rose-50 border border-rose-200 text-rose-800
+              {% else %}bg-zinc-50 border border-zinc-200 text-zinc-700{% endif %}">
+    {% if bars_refresh_state.running %}
+      <i data-lucide="loader" class="w-4 h-4 animate-spin"></i>
+      <strong>Bars refresh in progress.</strong>
+      <span>Started {{ bars_refresh_state.started_at }} (UTC). The Bars count above ticks up live as days commit.</span>
+    {% elif bars_refresh_state.last_error %}
+      <i data-lucide="alert-triangle" class="w-4 h-4"></i>
+      <strong>Last bars refresh failed:</strong>
+      <span class="font-mono">{{ bars_refresh_state.last_error }}</span>
+      <span>(finished {{ bars_refresh_state.finished_at }} UTC)</span>
+    {% elif bars_refresh_state.last_summary %}
+      {% set s = bars_refresh_state.last_summary %}
+      <i data-lucide="check-circle" class="w-4 h-4 text-emerald-600"></i>
+      <strong>Last bars refresh:</strong>
+      <span>+{{ s.rows_upserted }} rows · {{ s.days_downloaded }} days downloaded · {{ s.days_skipped_existing }} skipped (already cached) · {{ s.days_failed }} failed · finished {{ bars_refresh_state.finished_at }} UTC</span>
+    {% endif %}
+  </div>
+  {% endif %}
   {% if rf %}<div class="p-3 rounded-lg bg-sky-50 border border-sky-200 text-sky-800 text-sm"><strong>Market-cap refresh:</strong> {{ rf }} (running in background — reload to see progress)</div>{% endif %}
   {% if rf_err %}<div class="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-sm"><strong>Market-cap refresh error:</strong> {{ rf_err }}</div>{% endif %}
   {% if err %}<div class="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-sm"><strong>Scan error:</strong> {{ err }}</div>{% endif %}

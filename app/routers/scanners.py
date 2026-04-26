@@ -48,8 +48,11 @@ def _bars_cache_size(db: Session) -> dict:
 def scanners_home(request: Request, db: Session = Depends(get_db)):
     from ..scanner import index_universe as idx_uni
 
+    from ..scanner import bars_cache as bc
+
     last_runs = scanner_runner.last_run_summary(db)
     cache = _bars_cache_size(db)
+    bars_refresh_state = bc.refresh_status()
 
     # Universe = NSE Total Market index ∪ liquid non-index names with bars.
     # See _load_universe_and_bars in runner.py for the rules.
@@ -71,6 +74,7 @@ def scanners_home(request: Request, db: Session = Depends(get_db)):
             "scan_types": [{"key": k, "label": v[0]} for k, v in SCAN_TYPES.items()],
             "last_runs": last_runs,
             "cache": cache,
+            "bars_refresh_state": bars_refresh_state,
             "idx_count": idx_count,
             "universe_breakdown": universe_breakdown,
             "nse_status": nse_status,
