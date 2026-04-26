@@ -175,10 +175,22 @@ def build_summary(db: Session) -> StatusSummary:
     n_7d_probes = len(rows_7d)
     n_7d_fails = sum(1 for r in rows_7d if not r.ok)
 
-    # Uptime %: probes that succeeded ÷ EXPECTED probes (1/minute) — so
-    # gaps from "app was down, scheduler couldn't write" count against us.
-    expected_24h = (24 * 60 * 60) // PROBE_INTERVAL_S
-    expected_7d = (7 * 24 * 60 * 60) // PROBE_INTERVAL_S
+    # Uptime %: probes that succeeded ÷ EXPECTED probes (1/minute) — gaps
+    # from "app was down, scheduler couldn't write" count against us.
+    # Denominator is RAMPED — we use the time since the oldest probe in
+    # the window, capped at the full window. First minute of probing
+    # shows 100%; after 24h+ we use the full 1440 expected. Without this
+    # ramp, a freshly-deployed instance would show 1% uptime instead of
+    # the correct "all probes succeeded so far."
+    def _expected_probes(rows: list[HealthCheck], full_window_s: int) -> int:
+        if not rows:
+            return 1  # avoid division by zero; result will be 0/1 = 0%
+        elapsed_s = (now - rows[0].checked_at).total_seconds()
+        elapsed_s = max(PROBE_INTERVAL_S, min(elapsed_s, full_window_s))
+        return max(1, int(elapsed_s // PROBE_INTERVAL_S))
+
+    expected_24h = _expected_probes(rows_24h, 24 * 3600)
+    expected_7d = _expected_probes(rows_7d, 7 * 24 * 3600)
     ok_24h = n_24h_probes - n_24h_fails
     ok_7d = n_7d_probes - n_7d_fails
     uptime_24h_pct = (ok_24h / expected_24h * 100.0) if expected_24h > 0 else 0.0
