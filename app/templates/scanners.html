@@ -24,9 +24,29 @@
   </div>
 
   {% set refresh = request.query_params.get('refresh') %}
+  {% set scan = request.query_params.get('scan') %}
   {% set err = request.query_params.get('error') %}
   {% set rf = request.query_params.get('refresh_fund') %}
   {% set rf_err = request.query_params.get('refresh_fund_error') %}
+  {% if scan == 'started' %}<div class="p-3 rounded-lg bg-sky-50 border border-sky-200 text-sky-800 text-sm"><strong>Scan started in background.</strong> Running 7 detectors against ~4500 symbols × 252 bars — typically 30-90 sec on prod. Reload the page to see fresh results when the cache updates.</div>
+  {% elif scan == 'already_running' %}<div class="p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm"><strong>A scan is already running.</strong> Wait for it to finish before kicking off another.</div>{% endif %}
+
+  {# Live scan-run state — same pattern as the bars-refresh banner. #}
+  {% if scan_run_state and (scan_run_state.running or scan_run_state.last_error) %}
+  <div class="p-3 rounded-lg text-xs flex items-center gap-3 flex-wrap
+              {% if scan_run_state.running %}bg-sky-50 border border-sky-200 text-sky-800
+              {% else %}bg-rose-50 border border-rose-200 text-rose-800{% endif %}">
+    {% if scan_run_state.running %}
+      <i data-lucide="loader" class="w-4 h-4 animate-spin"></i>
+      <strong>Scan in progress.</strong>
+      <span>Started {{ scan_run_state.started_at }} (UTC). Reload the page when done — the candidate counts in the cards below will update.</span>
+    {% else %}
+      <i data-lucide="alert-triangle" class="w-4 h-4"></i>
+      <strong>Last scan failed:</strong>
+      <span class="font-mono">{{ scan_run_state.last_error }}</span>
+    {% endif %}
+  </div>
+  {% endif %}
   {% if refresh == 'started' %}<div class="p-3 rounded-lg bg-sky-50 border border-sky-200 text-sky-800 text-sm"><strong>Bars refresh started in background.</strong> Pulling up to 380 days from NSE + BSE (≈ 252 trading bars — needed for Minervini Trend Template). First run on a shallow cache takes 20-40 minutes. Reload the page to see the Bars count tick up.</div>
   {% elif refresh == 'already_running' %}<div class="p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm"><strong>Bars refresh already running.</strong> Wait for it to finish before kicking off another.</div>
   {% elif refresh %}<div class="p-3 rounded-lg bg-sky-50 border border-sky-200 text-sky-800 text-sm"><strong>Bars cache refreshed:</strong> <span class="tabular-nums">{{ refresh }}</span></div>{% endif %}

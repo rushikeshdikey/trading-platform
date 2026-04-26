@@ -53,6 +53,7 @@ def scanners_home(request: Request, db: Session = Depends(get_db)):
     last_runs = scanner_runner.last_run_summary(db)
     cache = _bars_cache_size(db)
     bars_refresh_state = bc.refresh_status()
+    scan_run_state = scanner_runner.scan_status()
 
     # Universe = NSE Total Market index ∪ liquid non-index names with bars.
     # See _load_universe_and_bars in runner.py for the rules.
@@ -75,6 +76,7 @@ def scanners_home(request: Request, db: Session = Depends(get_db)):
             "last_runs": last_runs,
             "cache": cache,
             "bars_refresh_state": bars_refresh_state,
+            "scan_run_state": scan_run_state,
             "idx_count": idx_count,
             "universe_breakdown": universe_breakdown,
             "nse_status": nse_status,
@@ -223,15 +225,18 @@ def _build_unified_results(db: Session) -> dict | None:
 
 @router.post("/run-all", response_class=HTMLResponse)
 def run_all(request: Request, db: Session = Depends(get_db)):
-    """Live re-run of all 4 scanners in parallel. Results land in ScanCache
-    and are visible to every user. Use this when you want fresher data than
-    the EOD pre-warm cache."""
-    try:
-        scanner_runner.run_all_scans(db, persist=True)
-    except Exception as exc:  # noqa: BLE001
-        log.exception("run-all failed")
-        return RedirectResponse(url=f"/scanners?error={exc}", status_code=303)
-    return RedirectResponse(url="/scanners", status_code=303)
+    """Kick off all 7 scanners in a daemon thread and return immediately.
+
+    Synchronous run on the deep bars cache (4500 symbols × 252 bars × 7
+    detectors) routinely exceeded the gunicorn 180s worker timeout —
+    same shape as the bars-refresh issue. Background-thread it; user
+    sees a "scan in progress" banner and reloads to see fresh results.
+    """
+    user = getattr(request.state, "user", None)
+    user_id = user.id if user else None
+    started = scanner_runner.start_background_scan(user_id=user_id)
+    msg = "started" if started else "already_running"
+    return RedirectResponse(url=f"/scanners?scan={msg}", status_code=303)
 
 
 @router.post("/refresh-fundamentals", response_class=HTMLResponse)

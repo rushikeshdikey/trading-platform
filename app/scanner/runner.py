@@ -296,6 +296,86 @@ def _detect_one_timed(
     return out, int((time.perf_counter() - started) * 1000)
 
 
+# -- Background scan-run -----------------------------------------------------
+#
+# Synchronous /scanners/run + /scanners/run-all routes were pinning gunicorn
+# workers once the bars cache deepened to a full year. With ~4500 symbols ×
+# 252 bars × 7 detectors, a cold-cache scan can take >180 s and exceed the
+# gunicorn timeout — same shape as the bars-refresh issue, fixed the same way.
+import threading  # noqa: E402
+
+_scan_lock = threading.Lock()
+_scan_thread: threading.Thread | None = None
+_scan_state: dict = {
+    "running": False,
+    "started_at": None,
+    "finished_at": None,
+    "total_ms": None,
+    "per_scan_ms": None,
+    "last_error": None,
+}
+
+
+def _scan_worker(user_id: int | None) -> None:
+    """Worker entrypoint — owns its own DB session + sets the user contextvar
+    so per-user ScanRun inserts succeed."""
+    from ..db import SessionLocal
+    from ..auth import current_user_id_var
+
+    global _scan_state
+    if user_id is not None:
+        current_user_id_var.set(user_id)
+    started = datetime.utcnow()
+    try:
+        with SessionLocal() as db:
+            results, per_ms, total_ms, _uni = run_all_scans(db, persist=True)
+        _scan_state = {
+            "running": False,
+            "started_at": _scan_state.get("started_at"),
+            "finished_at": datetime.utcnow().isoformat(),
+            "total_ms": total_ms,
+            "per_scan_ms": per_ms,
+            "last_error": None,
+        }
+    except Exception as exc:  # noqa: BLE001
+        log.exception("background scan failed")
+        _scan_state = {
+            "running": False,
+            "started_at": _scan_state.get("started_at"),
+            "finished_at": datetime.utcnow().isoformat(),
+            "total_ms": None,
+            "per_scan_ms": None,
+            "last_error": f"{type(exc).__name__}: {exc}",
+        }
+
+
+def start_background_scan(user_id: int | None = None) -> bool:
+    """Kick off run_all_scans in a daemon thread. Returns True if started,
+    False if a scan is already in flight (idempotent — safe to spam-click).
+    """
+    global _scan_thread, _scan_state
+    with _scan_lock:
+        if _scan_thread is not None and _scan_thread.is_alive():
+            return False
+        _scan_state = {
+            "running": True,
+            "started_at": datetime.utcnow().isoformat(),
+            "finished_at": None,
+            "total_ms": None,
+            "per_scan_ms": None,
+            "last_error": None,
+        }
+        _scan_thread = threading.Thread(
+            target=_scan_worker, args=(user_id,), daemon=True,
+        )
+        _scan_thread.start()
+    return True
+
+
+def scan_status() -> dict:
+    return dict(_scan_state)
+
+
 # -- Cache reader -----------------------------------------------------------
 
 
