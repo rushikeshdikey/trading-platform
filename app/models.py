@@ -235,7 +235,9 @@ class DailyBar(Base):
     # BigInteger because Indian high-volume names (ETFs, micro-caps) can
     # post >2.1B daily volume — overflows Postgres INT32. SQLite stores
     # ints as 64-bit always so local doesn't notice; prod hits this.
-    volume: Mapped[int] = mapped_column(BigInteger, default=0)
+    # server_default matches the migration's existing_server_default so
+    # `alembic check` doesn't see drift between model and Postgres schema.
+    volume: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
 
 
 class Watchlist(Base):

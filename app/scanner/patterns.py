@@ -437,12 +437,25 @@ def tight_setup(symbol: str, bars: Sequence[Bar], **_: object) -> Candidate | No
 
 
 def tightness_trading(symbol: str, bars: Sequence[Bar], **_: object) -> Candidate | None:
-    """Focus-on-one-setup: prior strong upmove → basing phase → low-volume dry-up
-    → tight-range consolidation → buy points A (cheat) and B (breakout).
+    """Ankur Patel "Focus on one setup" — restructured.
 
-    Each of the 5 phases must pass independently. Volume dry-up is the hardest
-    gate — it's why this produces way fewer candidates than plain Tight Setup
-    but with higher follow-through potential.
+    Five-phase progression from the canonical infographic:
+      1. Strong upmove   — visible uptrend leg (buyers in control)
+      2. Basing phase    — sideways consolidation after the move
+      3. Low-vol basing  — vol drops vs upmove (sellers exhausted)
+      4. Tight zone NOW  — last few bars contracted further
+      5. Buy points A&B  — A = cheat at base support / B = breakout above tight high
+
+    Earlier version made every numeric threshold a hard binary gate — a
+    healthy market produced 0 hits. This version keeps the SHAPE of the
+    setup as hard gates (upmove exists, base exists, currently tight),
+    but turns the magnitude of each into a SCORE so candidates rank by
+    pattern strength instead of all-or-nothing. Each candidate is also
+    classified as ``buy_point="A"`` (near base low — early entry) or
+    ``buy_point="B"`` (near tight zone high — breakout entry).
+
+    Expected output: 10-30 candidates per scan in a healthy market,
+    ranked by tightness × volume-dryup × upmove magnitude.
     """
     if not _passes_liquidity(bars):
         return None
@@ -456,13 +469,12 @@ def tightness_trading(symbol: str, bars: Sequence[Bar], **_: object) -> Candidat
     vols = _volumes(bars)
     last_close = float(closes[-1])
 
-    # Phase slices. Newest-last indexing, negative offsets.
-    tight_slice = slice(-TT_TIGHT_BARS, None)
-    base_slice = slice(-(TT_TIGHT_BARS + TT_BASE_BARS), -TT_TIGHT_BARS)
+    tight_slice = slice(-TT_TIGHT_BARS, None)        # last 10 bars
+    base_slice = slice(-(TT_TIGHT_BARS + TT_BASE_BARS), -TT_TIGHT_BARS)  # 35 prior
     upmove_slice = slice(
         -(TT_TIGHT_BARS + TT_BASE_BARS + TT_UPMOVE_BARS),
         -(TT_TIGHT_BARS + TT_BASE_BARS),
-    )
+    )                                                 # 75 prior to base
 
     tight_hi = float(highs[tight_slice].max())
     tight_lo = float(lows[tight_slice].min())
@@ -471,74 +483,117 @@ def tightness_trading(symbol: str, bars: Sequence[Bar], **_: object) -> Candidat
     upmove_hi = float(highs[upmove_slice].max())
     upmove_lo = float(lows[upmove_slice].min())
 
-    # 1. Strong upmove (≥ 30% gain within the upmove window).
-    if upmove_lo <= 0:
+    # ---- Hard gate 1: strong upmove EXISTED (lowered from 30% → 20%) ----
+    # Indian markets routinely produce 20-25% legs; 30% was too rare a bar.
+    if upmove_lo <= 0 or upmove_hi <= 0:
         return None
     upmove_gain = (upmove_hi - upmove_lo) / upmove_lo
-    if upmove_gain < TT_UPMOVE_MIN_GAIN:
+    if upmove_gain < 0.20:
         return None
 
-    # 2. Basing phase: not a deep pullback, moderate range.
-    base_drawdown = (upmove_hi - base_lo) / upmove_hi if upmove_hi > 0 else 1.0
-    if base_drawdown > TT_BASE_MAX_DRAWDOWN:
+    # ---- Hard gate 2: there's a real BASE after the upmove ----
+    # Base must not be a deep crash (>30% drawdown = trend broken).
+    if base_lo <= 0:
         return None
-    base_range_pct = (base_hi - base_lo) / last_close
-    if base_range_pct > TT_BASE_MAX_RANGE_PCT:
+    base_drawdown = (upmove_hi - base_lo) / upmove_hi
+    if base_drawdown > 0.30:
         return None
 
-    # 3. Volume dry-up: base < upmove, tight < base.
+    # ---- Hard gate 3: currently in a TIGHT zone ----
+    # 8% range over the last 10 bars; below that the setup is just
+    # "stock pulled back," not "tightening." This is the load-bearing
+    # gate — it's what makes the setup actionable today vs "in a base
+    # somewhere."
+    if last_close <= 0:
+        return None
+    tight_range_pct = (tight_hi - tight_lo) / last_close
+    if tight_range_pct > 0.08:
+        return None
+
+    # ---- Hard gate 4: price is still inside the basing structure ----
+    # Don't trigger on stocks that already gapped 20% above the base
+    # (that's a different setup — a chase trade, not Ankur's cheat/breakout).
+    if last_close > base_hi * 1.05:
+        return None
+
+    # ---- All hard gates passed. Compute score components ----
     upmove_vol = float(vols[upmove_slice].mean())
     base_vol = float(vols[base_slice].mean())
     tight_vol = float(vols[tight_slice].mean())
-    if upmove_vol <= 0 or base_vol <= 0:
-        return None
-    if base_vol / upmove_vol > TT_BASE_VOL_RATIO:
-        return None
-    if tight_vol / base_vol > TT_TIGHT_VOL_RATIO:
-        return None
+    base_range_pct = (base_hi - base_lo) / last_close
+    base_to_tight_vol_drop = (
+        max(0.0, 1 - tight_vol / base_vol) if base_vol > 0 else 0.0
+    )
+    upmove_to_base_vol_drop = (
+        max(0.0, 1 - base_vol / upmove_vol) if upmove_vol > 0 else 0.0
+    )
 
-    # 4. Tight range consolidation on the right side of the base.
-    tight_range_pct = (tight_hi - tight_lo) / last_close
-    if tight_range_pct > TT_TIGHT_RANGE_PCT_MAX:
-        return None
+    # ATR(5) — when ≤ 2.2% of close, it's a textbook Ankur "candles got small".
     atr5 = _atr(highs, lows, closes, 5)
-    if atr5 is None or atr5 / last_close > TT_TIGHT_ATR5_PCT_MAX:
+    atr5_pct = (atr5 / last_close) if atr5 else 1.0
+
+    # ---- Buy point classification ----
+    # A — "low cheat": close within 3% above the BASE low → entering at
+    #     support before momentum kicks in. The riskier-but-better-R:R entry.
+    # B — "breakout"  : close within 3% below the TIGHT high → about to
+    #     break the tight zone with momentum. The cleaner entry.
+    # Stocks can be in neither (in middle of base) — still scored, but lower.
+    near_base_low = (last_close - base_lo) / base_lo if base_lo > 0 else 1.0
+    near_tight_high = (tight_hi - last_close) / tight_hi if tight_hi > 0 else 1.0
+    if near_base_low <= 0.03:
+        buy_point = "A"
+        suggested_entry = round(last_close, 2)
+        suggested_sl = round(base_lo * 0.99, 2)
+    elif near_tight_high <= 0.03:
+        buy_point = "B"
+        suggested_entry = round(tight_hi * 1.005, 2)
+        suggested_sl = round(tight_lo * 0.99, 2)
+    else:
+        buy_point = "—"
+        suggested_entry = round(tight_hi * 1.005, 2)  # next breakout target
+        suggested_sl = round(tight_lo * 0.99, 2)
+
+    if suggested_sl >= suggested_entry or suggested_sl <= 0:
         return None
 
-    # Price must be inside the tight range (not already broken out too far).
-    if last_close < tight_lo * 0.99 or last_close > base_hi * TT_BREAKOUT_TOLERANCE:
-        return None
+    # ---- Scoring ----
+    # Score is the AND of: bigger upmove × tighter consolidation × more
+    # vol drop × being at a buy point. Candidates without a buy point
+    # still score but get penalised.
+    tightness_factor = max(0.0, 1 - tight_range_pct / 0.08)  # 0..1
+    atr_factor = max(0.0, 1 - atr5_pct / 0.04)               # 0..1
+    upmove_factor = min(1.0, upmove_gain / 0.50)             # cap at +50% gain
+    buy_point_bonus = {"A": 1.0, "B": 1.0, "—": 0.5}[buy_point]
 
-    # 5. Buy points.
-    buy_point_a = round(tight_hi * 1.005, 2)   # cheat — break of tight high
-    buy_point_b = round(base_hi * 1.005, 2)    # confirmation — break of base high
-
-    suggested_entry = buy_point_a              # prefer earlier entry (better R:R)
-    suggested_sl = round(tight_lo * 0.99, 2)   # 1% below tight low
-
-    if suggested_sl >= suggested_entry:
-        return None
-
-    vol_dryup = 1 - (tight_vol / upmove_vol)
-    score = (upmove_gain * vol_dryup) / max(tight_range_pct, 1e-4)
+    score = round(
+        100.0
+        * upmove_factor
+        * (0.4 + 0.3 * tightness_factor + 0.2 * base_to_tight_vol_drop + 0.1 * upmove_to_base_vol_drop)
+        * (0.5 + 0.5 * atr_factor)
+        * buy_point_bonus,
+        2,
+    )
 
     return Candidate(
         symbol=symbol,
         scan_type="tightness_trading",
-        score=round(float(score), 3),
+        score=score,
         close=round(last_close, 2),
         suggested_entry=suggested_entry,
         suggested_sl=suggested_sl,
         extras={
+            "buy_point": buy_point,
+            "buy_point_a": round(base_lo * 1.005, 2),
+            "buy_point_b": round(tight_hi * 1.005, 2),
             "upmove_gain_pct": round(upmove_gain * 100, 1),
             "base_drawdown_pct": round(base_drawdown * 100, 1),
             "base_high": round(base_hi, 2),
+            "base_low": round(base_lo, 2),
             "tight_high": round(tight_hi, 2),
             "tight_low": round(tight_lo, 2),
             "tight_range_pct": round(tight_range_pct * 100, 2),
-            "vol_dryup_pct": round(vol_dryup * 100, 0),
-            "buy_point_a": buy_point_a,
-            "buy_point_b": buy_point_b,
+            "atr5_pct": round(atr5_pct * 100, 2),
+            "vol_dryup_pct": round(base_to_tight_vol_drop * 100, 0),
         },
     )
 

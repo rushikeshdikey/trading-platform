@@ -712,7 +712,7 @@
               {% elif selected_scan.key == 'tight_setup' %}
                 <th>Base high</th><th>Base low</th><th>ATR%</th><th>Range%</th>
               {% elif selected_scan.key == 'tightness_trading' %}
-                <th>Upmove</th><th>Drawdown</th><th>Tight range</th><th>Vol dry-up</th><th>Buy B</th>
+                <th>BP</th><th>Upmove</th><th>Tight range</th><th>Vol dry-up</th><th>Buy A / B</th>
               {% elif selected_scan.key == 'institutional_buying' %}
                 <th>Accum days</th><th>Distrib</th><th>Net</th><th>25b gain</th><th>Last accum</th>
               {% elif selected_scan.key == 'base_on_base' %}
@@ -753,11 +753,15 @@
                   <td class="tabular-nums">{{ c.extras.atr14_pct }}%</td>
                   <td class="tabular-nums">{{ c.extras.range20_pct }}%</td>
                 {% elif selected_scan.key == 'tightness_trading' %}
+                  <td>
+                    {% if c.extras.buy_point == 'A' %}<span class="pill text-[10px] font-bold bg-emerald-100 text-emerald-800 border-emerald-300" title="Cheat entry near base support">A</span>
+                    {% elif c.extras.buy_point == 'B' %}<span class="pill text-[10px] font-bold bg-sky-100 text-sky-800 border-sky-300" title="Breakout above tight zone">B</span>
+                    {% else %}<span class="pill text-[10px] bg-zinc-100 text-zinc-500 border-zinc-200" title="In base, not at a buy point yet">—</span>{% endif %}
+                  </td>
                   <td class="tabular-nums text-emerald-700">+{{ c.extras.upmove_gain_pct }}%</td>
-                  <td class="tabular-nums">{{ c.extras.base_drawdown_pct }}%</td>
                   <td class="tabular-nums">{{ c.extras.tight_range_pct }}%</td>
                   <td class="tabular-nums text-sky-700">{{ c.extras.vol_dryup_pct }}%</td>
-                  <td class="tabular-nums">₹{{ c.extras.buy_point_b }}</td>
+                  <td class="tabular-nums text-xs">A:₹{{ c.extras.buy_point_a }} / B:₹{{ c.extras.buy_point_b }}</td>
                 {% elif selected_scan.key == 'institutional_buying' %}
                   <td class="tabular-nums text-emerald-700">{{ c.extras.accum_days }}</td>
                   <td class="tabular-nums text-rose-600">{{ c.extras.distrib_days }}</td>
