@@ -124,16 +124,17 @@ def _bucket_rows(
     exist yet" from "app was down".
     """
     by_bucket: dict[int, list[HealthCheck]] = defaultdict(list)
-    bucket_starts = [b.timestamp() for b in buckets]
+    if not buckets:
+        return []
+    first_start = buckets[0].timestamp()
+    n_buckets = len(buckets)
+    # Buckets are uniformly spaced — index by integer division so each row
+    # is O(1) instead of scanning every bucket. Avoids a 288×N inner loop on
+    # the 24h chart where N grows ~1440 per day.
     for r in rows:
         ts = r.checked_at.timestamp()
-        # Binary-search would be O(log n); linear is fine at our row counts.
-        idx = -1
-        for i, start in enumerate(bucket_starts):
-            if start <= ts < start + slot_seconds:
-                idx = i
-                break
-        if idx >= 0:
+        idx = int((ts - first_start) // slot_seconds)
+        if 0 <= idx < n_buckets:
             by_bucket[idx].append(r)
 
     out: list[StatusSlot] = []

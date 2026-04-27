@@ -157,20 +157,73 @@ class TradeMetrics:
 
 
 def metrics(trade: Trade) -> TradeMetrics:
+    # The pure-function helpers above each independently walk pyramids/exits;
+    # naive calls would walk them ~20× per trade. Compute primitives once and
+    # reuse — same results, one pass.
+    pyramids = trade.pyramids
+    exits = trade.exits
+    init_qty = trade.initial_qty
+
+    pyr_qty = sum(p.qty for p in pyramids)
+    tq = init_qty + pyr_qty
+    if tq:
+        ae = (
+            trade.initial_entry_price * init_qty
+            + sum(p.price * p.qty for p in pyramids)
+        ) / tq
+    else:
+        ae = 0.0
+
+    eq = sum(e.qty for e in exits)
+    oq = tq - eq
+    real_amt = sum(e.price * e.qty for e in exits)
+    avg_ex = (real_amt / eq) if eq else None
+
+    is_buy = trade.side == "B"
+    if avg_ex is not None:
+        pnl = (avg_ex - ae) * eq if is_buy else (ae - avg_ex) * eq
+    else:
+        pnl = 0.0
+
+    ref = avg_ex if avg_ex is not None else trade.cmp
+    if ref is not None and ae != 0:
+        raw_move = (ref - ae) / ae
+        smp = raw_move if is_buy else -raw_move
+    else:
+        smp = None
+
+    risk_per_share = abs(ae - trade.sl)
+    if ref is not None and risk_per_share >= 0.01:
+        rr = ((ref - ae) / risk_per_share) if is_buy else ((ae - ref) / risk_per_share)
+    else:
+        rr = None
+
+    end = trade.close_date or date.today()
+    hd = (end - trade.entry_date).days
+
+    if oq == 0:
+        oh = 0.0
+    elif is_buy:
+        oh = max(0.0, (ae - trade.sl) * oq)
+    else:
+        oh = max(0.0, (trade.sl - ae) * oq)
+
+    slp = (abs(ae - trade.sl) / ae) if ae else None
+
     return TradeMetrics(
-        total_qty=total_qty(trade),
-        avg_entry=avg_entry(trade),
-        exited_qty=exited_qty(trade),
-        open_qty=open_qty(trade),
-        avg_exit=avg_exit(trade),
-        realised_amount=realised_amount(trade),
-        pnl_rs=pnl_rs(trade),
-        stock_move_pct=stock_move_pct(trade),
-        reward_risk=reward_risk(trade),
-        holding_days=holding_days(trade),
-        position_size_rs=position_size_rs(trade),
-        sl_pct=sl_pct(trade),
-        open_heat_rs=open_heat_rs(trade),
+        total_qty=tq,
+        avg_entry=ae,
+        exited_qty=eq,
+        open_qty=oq,
+        avg_exit=avg_ex,
+        realised_amount=real_amt,
+        pnl_rs=pnl,
+        stock_move_pct=smp,
+        reward_risk=rr,
+        holding_days=hd,
+        position_size_rs=ae * tq,
+        sl_pct=slp,
+        open_heat_rs=oh,
     )
 
 
