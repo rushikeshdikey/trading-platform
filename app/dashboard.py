@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import date
 
 from sqlalchemy import and_, or_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from . import calculations as calc
 from . import charges as charges_svc
@@ -25,6 +25,7 @@ def _prior_realised_pnl(
     """
     q = (
         db.query(Trade)
+        .options(selectinload(Trade.pyramids), selectinload(Trade.exits))
         .filter(Trade.status == "closed")
         .filter(Trade.close_date < before)
     )
@@ -145,6 +146,7 @@ def build_year(db: Session, year: int) -> tuple[list[MonthRow], YearAggregates, 
     # Include trades that either opened or closed in this FY.
     trades = (
         db.query(Trade)
+        .options(selectinload(Trade.pyramids), selectinload(Trade.exits))
         .filter(
             or_(
                 and_(Trade.entry_date >= year_start, Trade.entry_date <= year_end),
@@ -225,6 +227,8 @@ def build_year(db: Session, year: int) -> tuple[list[MonthRow], YearAggregates, 
         impacts: list[float] = []
         fo_count = 0
         holding_days: list[int] = []
+        closed_count = 0
+        month_wins = 0
 
         for t in trs:
             m_data = calc.metrics(t)
@@ -234,8 +238,10 @@ def build_year(db: Session, year: int) -> tuple[list[MonthRow], YearAggregates, 
                 month_pnl += pnl
                 impact = pnl / starting if starting else 0.0
                 impacts.append(impact)
+                closed_count += 1
                 if pnl > 0:
                     wins += 1
+                    month_wins += 1
                     gains.append(pnl / starting if starting else 0.0)
                 elif pnl < 0:
                     losses.append(pnl / starting if starting else 0.0)
@@ -270,12 +276,7 @@ def build_year(db: Session, year: int) -> tuple[list[MonthRow], YearAggregates, 
             pnl_pct=pnl_pct,
             final_capital=final_capital,
             num_trades=len(trs),
-            win_pct=(
-                sum(1 for t in trs if t.status == "closed" and calc.pnl_rs(t) > 0)
-                / sum(1 for t in trs if t.status == "closed")
-                if any(t.status == "closed" for t in trs)
-                else None
-            ),
+            win_pct=(month_wins / closed_count) if closed_count else None,
             avg_gain=(sum(gains) / len(gains)) if gains else None,
             avg_loss=(sum(losses) / len(losses)) if losses else None,
             avg_rr=(sum(rrs) / len(rrs)) if rrs else None,
@@ -321,6 +322,7 @@ def setup_performance(db: Session, year: int) -> list[dict]:
     """Aggregate closed trades by Setup for the given FY (`year` is FY start)."""
     trades = (
         db.query(Trade)
+        .options(selectinload(Trade.pyramids), selectinload(Trade.exits))
         .filter(Trade.status == "closed")
         .filter(Trade.close_date >= date(year, 4, 1))
         .filter(Trade.close_date <= date(year + 1, 3, 31))
@@ -334,6 +336,7 @@ def setup_performance(db: Session, year: int) -> list[dict]:
     for setup, trs in sorted(grouped.items(), key=lambda kv: -len(kv[1])):
         pnls = [charges_svc.net_pnl(t) for t in trs]
         wins = sum(1 for p in pnls if p > 0)
+        rrs = [rr for t in trs if (rr := calc.reward_risk(t)) is not None]
         out.append(
             {
                 "setup": setup,
@@ -341,10 +344,7 @@ def setup_performance(db: Session, year: int) -> list[dict]:
                 "wins": wins,
                 "win_pct": (wins / len(trs)) if trs else 0,
                 "total_pnl": sum(pnls),
-                "avg_rr": (
-                    sum(rr for t in trs if (rr := calc.reward_risk(t)) is not None)
-                    / max(1, sum(1 for t in trs if calc.reward_risk(t) is not None))
-                ),
+                "avg_rr": (sum(rrs) / len(rrs)) if rrs else 0,
             }
         )
     return out

@@ -2,7 +2,7 @@ from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from .. import analytics
 from .. import calculations as calc
@@ -21,30 +21,41 @@ router = APIRouter()
 def dashboard_page(request: Request, year: int | None = None, db: Session = Depends(get_db)):
     # `year` is an FY start year (FY 2025-26 = year 2025). Default = current FY.
     year = year if year is not None else dash.fy_start(date.today())
-    rows, yagg, equity = dash.build_year(db, year)
-    setups = dash.setup_performance(db, year)
 
     open_trades = (
         db.query(Trade)
+        .options(selectinload(Trade.pyramids), selectinload(Trade.exits))
         .filter(Trade.status == "open")
         .order_by(Trade.entry_date.desc())
         .all()
     )
-    open_heat_total = sum(calc.open_heat_rs(t) for t in open_trades)
-    open_exposure_total = sum(calc.open_exposure_rs(t) for t in open_trades)
+    # Single pass over open trades — metrics also gives heat/exposure derivables.
+    metrics_for: dict[int, calc.TradeMetrics] = {}
+    open_heat_total = 0.0
+    open_exposure_total = 0.0
+    for t in open_trades:
+        m = calc.metrics(t)
+        metrics_for[t.id] = m
+        open_heat_total += m.open_heat_rs
+        open_exposure_total += m.avg_entry * m.open_qty
 
     settings_map = app_settings.all_settings(db)
 
-    # All FYs with activity for the year-selector.
+    # All FYs with activity for the year-selector — compute once, reuse.
     available_years = dash.years_with_activity(db)
     if year not in available_years:
         available_years = sorted(set(available_years) | {year})
 
-    # Per-FY monthly breakdown: newest FY first.
-    all_years = sorted(dash.years_with_activity(db), reverse=True)
+    # Per-FY monthly breakdown: newest FY first. Cache the selected year's
+    # build_year result so we don't recompute it inside the loop below.
+    rows: list[dash.MonthRow] = []
+    yagg: dash.YearAggregates | None = None
+    equity: list[dict] = []
     yearly_tables = []
-    for y in all_years:
-        y_rows, y_yagg, _ = dash.build_year(db, y)
+    for y in sorted(available_years, reverse=True):
+        y_rows, y_yagg, y_equity = dash.build_year(db, y)
+        if y == year:
+            rows, yagg, equity = y_rows, y_yagg, y_equity
         if any(r.num_trades or r.added_withdrawn for r in y_rows):
             yearly_tables.append({
                 "year": y,
@@ -52,6 +63,10 @@ def dashboard_page(request: Request, year: int | None = None, db: Session = Depe
                 "rows": y_rows,
                 "yagg": y_yagg,
             })
+    if yagg is None:
+        rows, yagg, equity = dash.build_year(db, year)
+
+    setups = dash.setup_performance(db, year)
 
     return templates.TemplateResponse(
         request,
@@ -67,7 +82,7 @@ def dashboard_page(request: Request, year: int | None = None, db: Session = Depe
             "open_trades": open_trades,
             "open_heat_total": open_heat_total,
             "open_exposure_total": open_exposure_total,
-            "metrics_for": {t.id: calc.metrics(t) for t in open_trades},
+            "metrics_for": metrics_for,
             "settings": settings_map,
             "today_iso": date.today().isoformat(),
             "prices_last_refresh": price_svc.last_refresh_at(db),
