@@ -24,7 +24,7 @@ from ..scanner import fundamentals as fundamentals_svc
 from ..scanner import runner as scanner_runner
 from ..scanner import universe as universe_mod
 from ..scanner.patterns import SCAN_TYPES
-from ..scanner.risk import size_candidate
+from ..scanner.risk import get_user_risk_tiers, size_candidate
 
 log = logging.getLogger("journal.scanners")
 
@@ -330,9 +330,15 @@ def run_scan(
         .filter(Watchlist.symbol.in_([c.symbol for c in candidates]))
         .all()
     }
+    # Pre-fetch capital + risk tiers ONCE — size_candidate's defaults would
+    # otherwise call current_capital(db) (full build_year walk) per candidate.
+    capital = dash_svc.current_capital(db)
+    risk_low, risk_high = get_user_risk_tiers(db)
     rows = []
     for c in candidates:
-        sizing = size_candidate(db, c)
+        sizing = size_candidate(
+            db, c, capital=capital, risk_low=risk_low, risk_high=risk_high,
+        )
         rows.append(
             {
                 "candidate": c,
@@ -350,7 +356,6 @@ def run_scan(
         universe_breakdown = {"total": 0, "in_index": 0, "soft_included": 0}
     idx_count = universe_breakdown["total"]
     scan_label = SCAN_TYPES[scan_type][0]
-    capital = dash_svc.current_capital(db)
     default_risk = app_settings.get_float(db, "default_risk_pct", 0.005)
 
     return templates.TemplateResponse(
