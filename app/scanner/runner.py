@@ -420,17 +420,29 @@ def latest_cached_run(
 def latest_cached_all(
     db: Session, max_age_minutes: int = 24 * 60,
 ) -> tuple[dict[str, list[Candidate]], dict[str, ScanCache]] | None:
-    """Cached read for all 4 scans. Returns None if any scan is missing
-    a fresh cached row — caller falls back to a live run."""
-    results: dict[str, list[Candidate]] = {}
-    rows: dict[str, ScanCache] = {}
-    for scan_type in SCAN_TYPES:
-        hit = latest_cached_run(db, scan_type, max_age_minutes)
-        if hit is None:
-            return None
-        candidates, row = hit
-        results[scan_type] = candidates
-        rows[scan_type] = row
+    """Cached read for all scans. Returns None if any scan is missing
+    a fresh cached row — caller falls back to a live run.
+
+    One IN query for all scan_types instead of N round-trips: ScanCache
+    has at most one row per scan_type (upsert), so the result set is
+    bounded by len(SCAN_TYPES).
+    """
+    cutoff = datetime.utcnow() - timedelta(minutes=max_age_minutes)
+    fresh_rows = (
+        db.query(ScanCache)
+        .filter(
+            ScanCache.scan_type.in_(SCAN_TYPES.keys()),
+            ScanCache.run_at >= cutoff,
+        )
+        .all()
+    )
+    rows: dict[str, ScanCache] = {r.scan_type: r for r in fresh_rows}
+    if any(scan_type not in rows for scan_type in SCAN_TYPES):
+        return None
+    results: dict[str, list[Candidate]] = {
+        scan_type: _deserialize_candidates(rows[scan_type].payload)
+        for scan_type in SCAN_TYPES
+    }
     return results, rows
 
 
@@ -458,14 +470,24 @@ def refresh_bars_cache(db: Session, lookback_days: int = 180):
 
 
 def last_run_summary(db: Session) -> dict[str, dict | None]:
+    """Latest ScanRun per scan_type. One windowed query instead of N order-
+    by-limit-1 round-trips."""
+    from sqlalchemy import func
+
+    rn = func.row_number().over(
+        partition_by=ScanRun.scan_type,
+        order_by=ScanRun.run_at.desc(),
+    ).label("rn")
+    subq = (
+        db.query(ScanRun, rn)
+        .filter(ScanRun.scan_type.in_(SCAN_TYPES.keys()))
+        .subquery()
+    )
+    latest = db.query(ScanRun).join(subq, ScanRun.id == subq.c.id).filter(subq.c.rn == 1).all()
+    by_type = {r.scan_type: r for r in latest}
     out: dict[str, dict | None] = {}
     for scan_type in SCAN_TYPES:
-        row = (
-            db.query(ScanRun)
-            .filter(ScanRun.scan_type == scan_type)
-            .order_by(ScanRun.run_at.desc())
-            .first()
-        )
+        row = by_type.get(scan_type)
         out[scan_type] = (
             None
             if row is None
