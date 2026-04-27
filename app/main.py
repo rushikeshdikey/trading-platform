@@ -255,7 +255,13 @@ def _maybe_eod_catchup() -> None:
         )
 
 
-_maybe_eod_catchup()
+# Boot-time EOD catch-up is intentionally NOT called here. Calling it at
+# module top-level meant every gunicorn worker process kicked off the
+# prewarm in a daemon thread on boot — 2-4 workers × 1 prewarm-with-7-detector
+# threads each storms a 2-vCPU box and starves request workers. Until we add
+# a multi-process leader election (file lock, redis, or a separate scheduler
+# container), the in-process APScheduler at 15:35 IST is the only EOD trigger.
+# A deploy that lands AFTER 15:35 will leave the cache stale until tomorrow.
 
 
 @app.get("/api/status")
