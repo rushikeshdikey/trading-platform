@@ -180,7 +180,9 @@ def build_position_actions(db: Session) -> list[PositionAction]:
 
 @dataclass
 class RiskBudgetPanel:
-    capital: float
+    capital: float                  # book value (realised P&L only)
+    nav_rs: float                   # mark-to-market: capital + unrealised P&L on opens
+    unrealized_pnl_rs: float        # nav_rs - capital, for the "+₹X (today's marks)" line
     open_heat_rs: float
     open_heat_pct: float
     max_heat_rs: float
@@ -196,8 +198,22 @@ def build_risk_budget(db: Session) -> RiskBudgetPanel:
     capital = dash_svc.current_capital(db)
     max_pct = app_settings.get_float(db, "max_open_heat_pct", 0.06)
     max_rs = capital * max_pct
+
+    # Unrealised P&L on open positions, summed mark-to-market. NAV = capital
+    # + unrealised. Skips trades where CMP isn't available (those just don't
+    # contribute, same shape as portfolio.build()).
+    unrealized = 0.0
+    for t in opens:
+        if t.cmp is None:
+            continue
+        m = calc.metrics(t)
+        sign = 1 if t.side == "B" else -1
+        unrealized += (t.cmp - m.avg_entry) * sign * m.open_qty
+
     return RiskBudgetPanel(
         capital=round(capital, 2),
+        nav_rs=round(capital + unrealized, 2),
+        unrealized_pnl_rs=round(unrealized, 2),
         open_heat_rs=round(open_heat, 2),
         open_heat_pct=(open_heat / capital) if capital else 0.0,
         max_heat_rs=round(max_rs, 2),

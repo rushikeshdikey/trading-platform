@@ -60,7 +60,8 @@ class Summary:
     open_risk_rs: float
     open_risk_pct_of_capital: float | None
     locked_profit_rs: float
-    capital: float
+    capital: float                   # book value: starting + capital events + REALISED P&L
+    nav_rs: float                    # capital + unrealised P&L on open positions (mark-to-market)
     cards: list[PositionCard] = field(default_factory=list)
 
 
@@ -191,5 +192,9 @@ def build(db: Session) -> Summary:
         open_risk_pct_of_capital=(open_risk / capital) if capital else None,
         locked_profit_rs=locked_profit,
         capital=capital,
+        # NAV = book value + unrealised P&L on open positions, i.e. what
+        # the portfolio is "worth" right now if every open trade closed at CMP.
+        # This is what the user mentally expects when they say "capital".
+        nav_rs=capital + total_pnl,
         cards=cards,
     )

@@ -320,7 +320,21 @@
           <h3 class="font-semibold">Risk budget</h3>
         </div>
         <div class="space-y-2 text-sm">
-          <div class="flex justify-between"><span class="text-zinc-500">Capital</span><span class="font-semibold tabular-nums">₹{{ '{:,.0f}'.format(rb.capital) }}</span></div>
+          <div class="flex justify-between" title="Mark-to-market: book capital + unrealised P&L on open positions.">
+            <span class="text-zinc-500">NAV (mark-to-market)</span>
+            <span class="font-semibold tabular-nums {% if rb.unrealized_pnl_rs > 0 %}text-emerald-700{% elif rb.unrealized_pnl_rs < 0 %}text-rose-700{% endif %}">
+              ₹{{ '{:,.0f}'.format(rb.nav_rs) }}
+              {% if rb.unrealized_pnl_rs %}
+                <span class="text-[11px] font-normal {% if rb.unrealized_pnl_rs > 0 %}text-emerald-600{% else %}text-rose-600{% endif %}">
+                  ({{ '+' if rb.unrealized_pnl_rs > 0 else '' }}₹{{ '{:,.0f}'.format(rb.unrealized_pnl_rs) }})
+                </span>
+              {% endif %}
+            </span>
+          </div>
+          <div class="flex justify-between" title="Book value: starting capital + capital events + realised P&L from CLOSED trades.">
+            <span class="text-zinc-500">Capital (book)</span>
+            <span class="font-semibold tabular-nums">₹{{ '{:,.0f}'.format(rb.capital) }}</span>
+          </div>
           <div class="flex justify-between"><span class="text-zinc-500">Open positions</span><span class="font-semibold tabular-nums">{{ rb.open_positions }}</span></div>
           <div class="flex justify-between"><span class="text-zinc-500">Open heat</span><span class="font-semibold tabular-nums {{ 'text-rose-700' if rb.over_budget else '' }}">₹{{ '{:,.0f}'.format(rb.open_heat_rs) }} ({{ '{:.1%}'.format(rb.open_heat_pct) }})</span></div>
           <div class="flex justify-between"><span class="text-zinc-500">Max heat ({{ '{:.0%}'.format(rb.max_heat_pct) }})</span><span class="font-semibold tabular-nums">₹{{ '{:,.0f}'.format(rb.max_heat_rs) }}</span></div>
