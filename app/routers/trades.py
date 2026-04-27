@@ -47,6 +47,23 @@ def _next_trade_no(db: Session) -> int:
     return 1
 
 
+def _reevaluate_close_status(trade: Trade) -> None:
+    """Snap ``trade.status`` and ``trade.close_date`` to the invariant
+    ``open_qty == 0 ⇔ status == "closed"``.
+
+    Call this from every site that mutates qty (initial_qty, pyramids,
+    exits). Without it, edits made AFTER an auto-close (e.g. adding a
+    pyramid to a fully-exited trade) leave a closed trade with positive
+    open_qty — invisible on the open-trades page, broken in dashboards.
+    """
+    if calc.open_qty(trade) == 0 and trade.exits:
+        trade.status = "closed"
+        trade.close_date = max(e.date for e in trade.exits)
+    else:
+        trade.status = "open"
+        trade.close_date = None
+
+
 @router.get("", response_class=HTMLResponse)
 def list_trades(
     request: Request,
@@ -219,6 +236,7 @@ def trade_edit_save(
     trade.strike = _opt_float(strike)
     trade.option_type = option_type or None
     trade.observations = observations or None
+    _reevaluate_close_status(trade)
     db.commit()
     return RedirectResponse(url=f"/trades/{trade_id}", status_code=303)
 
@@ -238,6 +256,10 @@ def edit_pyramid(
     row.price = price
     row.qty = qty
     row.date = _parse_date(pyramid_date, row.date)
+    trade = db.get(Trade, trade_id)
+    if trade is not None:
+        db.refresh(trade)
+        _reevaluate_close_status(trade)
     db.commit()
     return RedirectResponse(url=f"/trades/{trade_id}", status_code=303)
 
@@ -256,18 +278,10 @@ def edit_exit(
         raise HTTPException(404)
     trade = db.get(Trade, trade_id)
     assert trade is not None
-    # Prevent exits that would exceed total qty (subtract old qty first).
-    old_qty = row.qty
     row.qty = qty
     row.price = price
     row.date = _parse_date(exit_date, row.date)
-    # Re-evaluate close state
-    if calc.open_qty(trade) == 0 and trade.exits:
-        trade.status = "closed"
-        trade.close_date = max(e.date for e in trade.exits)
-    else:
-        trade.status = "open"
-        trade.close_date = None
+    _reevaluate_close_status(trade)
     db.commit()
     return RedirectResponse(url=f"/trades/{trade_id}", status_code=303)
 
@@ -398,6 +412,7 @@ def add_pyramid(
     trade.pyramids.append(
         Pyramid(sequence=seq, price=price, qty=qty, date=_parse_date(pyramid_date))
     )
+    _reevaluate_close_status(trade)
     db.commit()
     return RedirectResponse(url=f"/trades/{trade_id}", status_code=303)
 
@@ -424,10 +439,7 @@ def add_exit(
     trade.exits.append(
         Exit(sequence=seq, price=price, qty=qty, date=_parse_date(exit_date))
     )
-    # auto-close if fully exited
-    if calc.open_qty(trade) == 0:
-        trade.status = "closed"
-        trade.close_date = max(e.date for e in trade.exits)
+    _reevaluate_close_status(trade)
     db.commit()
     return RedirectResponse(url=f"/trades/{trade_id}", status_code=303)
 
@@ -469,6 +481,11 @@ def delete_pyramid(trade_id: int, pyramid_id: int, db: Session = Depends(get_db)
     row = db.get(Pyramid, pyramid_id)
     if row and row.trade_id == trade_id:
         db.delete(row)
+        db.flush()
+        trade = db.get(Trade, trade_id)
+        if trade is not None:
+            db.refresh(trade)
+            _reevaluate_close_status(trade)
         db.commit()
     return RedirectResponse(url=f"/trades/{trade_id}", status_code=303)
 
@@ -482,8 +499,6 @@ def delete_exit(trade_id: int, exit_id: int, db: Session = Depends(get_db)):
         trade = db.get(Trade, trade_id)
         if trade is not None:
             db.refresh(trade)
-            if calc.open_qty(trade) > 0:
-                trade.status = "open"
-                trade.close_date = None
+            _reevaluate_close_status(trade)
         db.commit()
     return RedirectResponse(url=f"/trades/{trade_id}", status_code=303)
