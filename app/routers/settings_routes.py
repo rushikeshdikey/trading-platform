@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
@@ -49,8 +49,22 @@ def save(
     max_open_heat_pct = max(0.0, min(0.50, max_open_heat_pct))
     default_allocation_pct = max(0.0, min(1.0, default_allocation_pct))
 
+    # Validate starting_capital_date here, not on read. dashboard.build_year
+    # silently set sc_date=None on a ValueError, which disabled the anchor
+    # logic and caused capital math to silently include pre-anchor P&L.
+    # Reject malformed dates at the boundary so the user sees the error.
+    sc_date_clean = (starting_capital_date or "").strip()
+    if sc_date_clean:
+        try:
+            date.fromisoformat(sc_date_clean)
+        except ValueError:
+            raise HTTPException(
+                400,
+                f"Starting capital date must be YYYY-MM-DD, got {starting_capital_date!r}",
+            )
+
     app_settings.set_value(db, "starting_capital", str(starting_capital))
-    app_settings.set_value(db, "starting_capital_date", starting_capital_date)
+    app_settings.set_value(db, "starting_capital_date", sc_date_clean)
     app_settings.set_value(db, "default_risk_pct", str(default_risk_pct))
     app_settings.set_value(db, "risk_pct_low", str(risk_pct_low))
     app_settings.set_value(db, "max_open_heat_pct", str(max_open_heat_pct))

@@ -1,12 +1,15 @@
 """Monthly / yearly rollups used by the dashboard view."""
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date
 
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session, selectinload
+
+log = logging.getLogger("journal.dashboard")
 
 from . import calculations as calc
 from . import charges as charges_svc
@@ -132,6 +135,13 @@ def build_year(db: Session, year: int) -> tuple[list[MonthRow], YearAggregates, 
     try:
         sc_date = date.fromisoformat(sc_date_str) if sc_date_str else None
     except ValueError:
+        # Settings save validates this now, but legacy DB rows may still
+        # contain malformed values — surface them in logs instead of
+        # silently disabling the fresh-start anchor.
+        log.warning(
+            "starting_capital_date=%r is not a valid ISO date — anchor disabled",
+            sc_date_str,
+        )
         sc_date = None
 
     def _after_anchor(d: date) -> bool:

@@ -11,6 +11,7 @@ from pathlib import Path
 from openpyxl import load_workbook
 from sqlalchemy.orm import Session
 
+from . import auth as auth_mod
 from . import masterlist, settings as app_settings
 from .models import Exit, Pyramid, Trade
 
@@ -98,101 +99,117 @@ def _as_str(v):
 
 
 def import_from_xlsx(db: Session, xlsx_path: Path) -> dict:
+    # Importer must run inside an authenticated request — we scope the wipe
+    # to the current user's trades only. A bulk ``db.query(Trade).delete()``
+    # would bypass the per-user SELECT filter in orm_events (the hook only
+    # intercepts SELECTs, not bulk DELETEs) and wipe every user's data.
+    if auth_mod.current_user_id_var.get() is None:
+        raise RuntimeError(
+            "import_from_xlsx requires an authenticated request context",
+        )
+
     wb = load_workbook(xlsx_path, data_only=True)
     if "DTrades" not in wb.sheetnames:
         return {"error": "DTrades sheet not found", "imported": 0}
     ws = wb["DTrades"]
 
-    # Wipe existing trades (safer than trying to diff-merge).
-    db.query(Exit).delete()
-    db.query(Pyramid).delete()
-    db.query(Trade).delete()
-    db.commit()
-
     imported = 0
     skipped = 0
-    for r in range(2, ws.max_row + 1):
-        entry_date = _as_date(_cell_value(ws, r, COLUMNS["entry_date"]))
-        instrument = _as_str(_cell_value(ws, r, COLUMNS["instrument"]))
-        entry_price = _as_float(_cell_value(ws, r, COLUMNS["entry"]))
-        qty = _as_int(_cell_value(ws, r, COLUMNS["initial_qty"]))
-        side = _as_str(_cell_value(ws, r, COLUMNS["side"]))
-        sl = _as_float(_cell_value(ws, r, COLUMNS["sl"]))
-        if not (entry_date and instrument and entry_price and qty and side):
-            skipped += 1
-            continue
+    try:
+        # Wipe THIS user's trades. db.delete(t) goes through the unit-of-work
+        # so the SELECT loading existing rows IS user-scoped, and the cascade
+        # on Trade.pyramids / Trade.exits drops their children inside the
+        # same transaction. No intermediate commit — if any insert below
+        # raises, rollback restores both the deletes and the inserts.
+        for t in db.query(Trade).all():
+            db.delete(t)
+        db.flush()
 
-        # Indian sheets use 'B'/'S' for Buy/Sell; accept aliases too.
-        side = side.strip().upper()[:1]
-        if side not in ("B", "S"):
-            skipped += 1
-            continue
+        for r in range(2, ws.max_row + 1):
+            entry_date = _as_date(_cell_value(ws, r, COLUMNS["entry_date"]))
+            instrument = _as_str(_cell_value(ws, r, COLUMNS["instrument"]))
+            entry_price = _as_float(_cell_value(ws, r, COLUMNS["entry"]))
+            qty = _as_int(_cell_value(ws, r, COLUMNS["initial_qty"]))
+            side = _as_str(_cell_value(ws, r, COLUMNS["side"]))
+            sl = _as_float(_cell_value(ws, r, COLUMNS["sl"]))
+            if not (entry_date and instrument and entry_price and qty and side):
+                skipped += 1
+                continue
 
-        if sl is None:
-            sl = entry_price  # safety default so the NOT NULL column is happy
+            # Indian sheets use 'B'/'S' for Buy/Sell; accept aliases too.
+            side = side.strip().upper()[:1]
+            if side not in ("B", "S"):
+                skipped += 1
+                continue
 
-        pos_status = (_as_str(_cell_value(ws, r, COLUMNS["position_status"])) or "").lower()
-        status = "closed" if pos_status == "closed" else "open"
-        close_date = _as_date(_cell_value(ws, r, COLUMNS["close_date"]))
+            if sl is None:
+                sl = entry_price  # safety default so the NOT NULL column is happy
 
-        trade = Trade(
-            trade_no=_as_int(_cell_value(ws, r, COLUMNS["trade_no"])),
-            instrument=instrument,
-            strike=_as_float(_cell_value(ws, r, COLUMNS["strike"])),
-            option_type=_as_str(_cell_value(ws, r, COLUMNS["option_type"])),
-            side=side,
-            entry_date=entry_date,
-            initial_entry_price=entry_price,
-            initial_qty=qty,
-            sl=sl,
-            tsl=_as_float(_cell_value(ws, r, COLUMNS["tsl"])),
-            cmp=_as_float(_cell_value(ws, r, COLUMNS["cmp"])),
-            setup=_as_str(_cell_value(ws, r, COLUMNS["setup"])),
-            base_duration=_as_str(_cell_value(ws, r, COLUMNS["base_duration"])),
-            status=status,
-            close_date=close_date,
-            plan_followed=_parse_bool(_cell_value(ws, r, COLUMNS["plan_followed"])),
-            exit_trigger=_as_str(_cell_value(ws, r, COLUMNS["exit_trigger"])),
-            proficiency=_as_str(_cell_value(ws, r, COLUMNS["proficiency"])),
-            growth_areas=_as_str(_cell_value(ws, r, COLUMNS["growth_areas"])),
-            observations=_as_str(_cell_value(ws, r, COLUMNS["observations"])),
-        )
+            pos_status = (_as_str(_cell_value(ws, r, COLUMNS["position_status"])) or "").lower()
+            status = "closed" if pos_status == "closed" else "open"
+            close_date = _as_date(_cell_value(ws, r, COLUMNS["close_date"]))
 
-        for i, (pkey, qkey, dkey) in enumerate(
-            [
-                ("p1_price", "p1_qty", "p1_date"),
-                ("p2_price", "p2_qty", "p2_date"),
-            ],
-            start=1,
-        ):
-            price = _as_float(_cell_value(ws, r, COLUMNS[pkey]))
-            pqty = _as_int(_cell_value(ws, r, COLUMNS[qkey]))
-            pdate = _as_date(_cell_value(ws, r, COLUMNS[dkey])) or entry_date
-            if price and pqty:
-                trade.pyramids.append(
-                    Pyramid(sequence=i, price=price, qty=pqty, date=pdate)
-                )
+            trade = Trade(
+                trade_no=_as_int(_cell_value(ws, r, COLUMNS["trade_no"])),
+                instrument=instrument,
+                strike=_as_float(_cell_value(ws, r, COLUMNS["strike"])),
+                option_type=_as_str(_cell_value(ws, r, COLUMNS["option_type"])),
+                side=side,
+                entry_date=entry_date,
+                initial_entry_price=entry_price,
+                initial_qty=qty,
+                sl=sl,
+                tsl=_as_float(_cell_value(ws, r, COLUMNS["tsl"])),
+                cmp=_as_float(_cell_value(ws, r, COLUMNS["cmp"])),
+                setup=_as_str(_cell_value(ws, r, COLUMNS["setup"])),
+                base_duration=_as_str(_cell_value(ws, r, COLUMNS["base_duration"])),
+                status=status,
+                close_date=close_date,
+                plan_followed=_parse_bool(_cell_value(ws, r, COLUMNS["plan_followed"])),
+                exit_trigger=_as_str(_cell_value(ws, r, COLUMNS["exit_trigger"])),
+                proficiency=_as_str(_cell_value(ws, r, COLUMNS["proficiency"])),
+                growth_areas=_as_str(_cell_value(ws, r, COLUMNS["growth_areas"])),
+                observations=_as_str(_cell_value(ws, r, COLUMNS["observations"])),
+            )
 
-        for i, (pkey, qkey, dkey) in enumerate(
-            [
-                ("exit1_price", "exit1_qty", "exit1_date"),
-                ("exit2_price", "exit2_qty", "exit2_date"),
-                ("exit3_price", "exit3_qty", "exit3_date"),
-            ],
-            start=1,
-        ):
-            price = _as_float(_cell_value(ws, r, COLUMNS[pkey]))
-            exq = _as_int(_cell_value(ws, r, COLUMNS[qkey]))
-            exd = _as_date(_cell_value(ws, r, COLUMNS[dkey])) or close_date or entry_date
-            if price and exq:
-                trade.exits.append(
-                    Exit(sequence=i, price=price, qty=exq, date=exd)
-                )
+            for i, (pkey, qkey, dkey) in enumerate(
+                [
+                    ("p1_price", "p1_qty", "p1_date"),
+                    ("p2_price", "p2_qty", "p2_date"),
+                ],
+                start=1,
+            ):
+                price = _as_float(_cell_value(ws, r, COLUMNS[pkey]))
+                pqty = _as_int(_cell_value(ws, r, COLUMNS[qkey]))
+                pdate = _as_date(_cell_value(ws, r, COLUMNS[dkey])) or entry_date
+                if price and pqty:
+                    trade.pyramids.append(
+                        Pyramid(sequence=i, price=price, qty=pqty, date=pdate)
+                    )
 
-        db.add(trade)
-        imported += 1
+            for i, (pkey, qkey, dkey) in enumerate(
+                [
+                    ("exit1_price", "exit1_qty", "exit1_date"),
+                    ("exit2_price", "exit2_qty", "exit2_date"),
+                    ("exit3_price", "exit3_qty", "exit3_date"),
+                ],
+                start=1,
+            ):
+                price = _as_float(_cell_value(ws, r, COLUMNS[pkey]))
+                exq = _as_int(_cell_value(ws, r, COLUMNS[qkey]))
+                exd = _as_date(_cell_value(ws, r, COLUMNS[dkey])) or close_date or entry_date
+                if price and exq:
+                    trade.exits.append(
+                        Exit(sequence=i, price=price, qty=exq, date=exd)
+                    )
 
-    db.commit()
+            db.add(trade)
+            imported += 1
+
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
 
     # After import, make sure any setup/etc. values we encountered exist in MasterList
     _ensure_masterlist_covers_trades(db)
