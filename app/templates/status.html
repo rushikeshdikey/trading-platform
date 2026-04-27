@@ -26,24 +26,41 @@
     .uptime-num.green { color: #059669; }
     .uptime-num.amber { color: #d97706; }
     .uptime-num.red   { color: #dc2626; }
-    .timeline { display: flex; gap: 1px; align-items: stretch; height: 36px; }
+    .timeline {
+      display: flex; gap: 1px; align-items: stretch; height: 36px;
+      /* Constrain so 288 narrow slots can't push the card border outward
+         when individual slots have a 1px dashed border (pre-deploy). */
+      width: 100%; overflow: hidden;
+    }
     .slot {
-      flex: 1; min-width: 2px; border-radius: 1px;
+      flex: 1 1 0; min-width: 0; border-radius: 1px;
       transition: opacity 0.15s;
+      /* border-box so any decorative border on a slot doesn't add to its
+         flex basis and overflow the timeline track. */
+      box-sizing: border-box;
     }
     .slot:hover { opacity: 0.7; cursor: help; }
     .slot.green   { background: #10b981; }
     .slot.amber   { background: #f59e0b; }
     .slot.red     { background: #ef4444; }
-    .slot.no-data { background: #e4e4e7; }
+    /* No-data = the probe loop didn't write a row this minute. The only
+       reason that happens (when the loop has ever existed for this app)
+       is the app was DOWN and the in-process scheduler couldn't write.
+       Render in the same red as failed-probe so a 5-minute outage is
+       visible as a red sliver, not nearly-invisible grey. */
+    .slot.no-data {
+      background: repeating-linear-gradient(
+        45deg, #ef4444 0 6px, #b91c1c 6px 12px
+      );
+    }
     /* Pre-deploy: bucket pre-dates first probe row → not a downtime
-       signal, just "feature didn't exist yet". Striped to read as
-       distinct from the solid grey "real downtime" buckets. */
+       signal, just "feature didn't exist yet". Striped grey, distinct
+       from the red downtime stripes. No border (was pushing slots out
+       of the card). */
     .slot.pre-deploy {
       background: repeating-linear-gradient(
         45deg, #f4f4f5 0 4px, #fafafa 4px 8px
       );
-      border: 1px dashed #d4d4d8;
     }
     .timeline-axis { display: flex; justify-content: space-between; margin-top: 0.5rem; font-size: 0.7rem; color: #a1a1aa; }
     .legend { display: flex; gap: 1rem; margin-top: 1rem; font-size: 0.75rem; color: #71717a; }
@@ -115,8 +132,8 @@
         <div class="legend-item"><span class="legend-dot" style="background:#10b981"></span> All probes ok</div>
         <div class="legend-item"><span class="legend-dot" style="background:#f59e0b"></span> Some failures</div>
         <div class="legend-item"><span class="legend-dot" style="background:#ef4444"></span> Mostly failed</div>
-        <div class="legend-item"><span class="legend-dot" style="background:#e4e4e7"></span> Downtime (gap in probes)</div>
-        <div class="legend-item"><span class="legend-dot" style="background: repeating-linear-gradient(45deg,#f4f4f5 0 4px,#fafafa 4px 8px); border:1px dashed #d4d4d8"></span> No probe history yet</div>
+        <div class="legend-item"><span class="legend-dot" style="background: repeating-linear-gradient(45deg,#ef4444 0 4px,#b91c1c 4px 8px)"></span> Downtime (no probes recorded)</div>
+        <div class="legend-item"><span class="legend-dot" style="background: repeating-linear-gradient(45deg,#f4f4f5 0 4px,#fafafa 4px 8px)"></span> No probe history yet</div>
       </div>
     </div>
 

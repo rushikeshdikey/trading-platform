@@ -209,24 +209,41 @@ def build_summary(db: Session) -> StatusSummary:
     n_7d_probes = len(rows_7d)
     n_7d_fails = sum(1 for r in rows_7d if not r.ok)
 
-    # Uptime %: probes that succeeded ÷ EXPECTED probes (1/minute) — gaps
-    # from "app was down, scheduler couldn't write" count against us.
-    # Denominator is RAMPED — we use the time since the oldest probe in
-    # the window, capped at the full window. First minute of probing
-    # shows 100%; after 24h+ we use the full 1440 expected. Without this
-    # ramp, a freshly-deployed instance would show 1% uptime instead of
-    # the correct "all probes succeeded so far."
-    def _expected_probes(rows: list[HealthCheck], full_window_s: int) -> int:
-        if not rows:
-            return 1  # avoid division by zero; result will be 0/1 = 0%
-        elapsed_s = (now - rows[0].checked_at).total_seconds()
+    # Uptime %: minutes-with-at-least-one-ok-probe ÷ EXPECTED minutes.
+    # Why minute-granular dedup: when the app ran with workers=4, every
+    # gunicorn worker had its own APScheduler instance and they all wrote
+    # one probe row per minute → 4× rows. Without dedup the numerator
+    # inflates beyond the denominator (capped at 100%) and HIDES the
+    # actual downtime gaps. Counting unique minutes restores the signal:
+    # a 30-min outage shows as 1380/1440 ≈ 95.83%, not 100.00%.
+    #
+    # Denominator is RAMPED — elapsed time since the FIRST EVER probe row,
+    # capped at the window. First minute of probing shows 100%; after a
+    # full window we use the full expected count. Without the ramp, a
+    # freshly-deployed instance shows 1% uptime instead of "all good
+    # since I started watching."
+    def _ok_minutes(rows: list[HealthCheck]) -> int:
+        seen: set[tuple[int, int, int, int, int]] = set()
+        for r in rows:
+            if not r.ok:
+                continue
+            t = r.checked_at
+            seen.add((t.year, t.month, t.day, t.hour, t.minute))
+        return len(seen)
+
+    def _expected_minutes(full_window_s: int) -> int:
+        # Ramped from first_probe_at (oldest in DB), so a brand-new
+        # deployment doesn't show 0.7% uptime.
+        if first_probe_at is None:
+            return 1
+        elapsed_s = (now - first_probe_at).total_seconds()
         elapsed_s = max(PROBE_INTERVAL_S, min(elapsed_s, full_window_s))
         return max(1, int(elapsed_s // PROBE_INTERVAL_S))
 
-    expected_24h = _expected_probes(rows_24h, 24 * 3600)
-    expected_7d = _expected_probes(rows_7d, 7 * 24 * 3600)
-    ok_24h = n_24h_probes - n_24h_fails
-    ok_7d = n_7d_probes - n_7d_fails
+    expected_24h = _expected_minutes(24 * 3600)
+    expected_7d = _expected_minutes(7 * 24 * 3600)
+    ok_24h = _ok_minutes(rows_24h)
+    ok_7d = _ok_minutes(rows_7d)
     uptime_24h_pct = (ok_24h / expected_24h * 100.0) if expected_24h > 0 else 0.0
     uptime_7d_pct = (ok_7d / expected_7d * 100.0) if expected_7d > 0 else 0.0
 
