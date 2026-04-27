@@ -16,7 +16,7 @@ import logging
 import time
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Iterable
 
 from sqlalchemy import func
@@ -150,10 +150,13 @@ def _bucket_rows(
             and bucket_end <= first_probe_at
         )
         # Label: HH:MM for ≤ 1h slots, "MMM DD" for daily slots.
+        # Daily labels use IST date — bucket starts are IST midnight stored
+        # as UTC-naive (see build_summary), so adding 5:30 maps back to IST.
         if slot_seconds < 3600:
             label = start.strftime("%H:%M")
         else:
-            label = start.strftime("%b %d")
+            ist_date = start + timedelta(hours=5, minutes=30)
+            label = ist_date.strftime("%b %d")
         out.append(StatusSlot(
             label=label, ok_count=ok, fail_count=fail,
             no_data=no_data, avg_ms=avg_ms, pre_deploy=pre_deploy,
@@ -196,10 +199,21 @@ def build_summary(db: Session) -> StatusSummary:
     ]
     slots_24h = _bucket_rows(rows_24h, buckets_24h, slot_24h_seconds, first_probe_at)
 
-    # 7d timeline: 1-day buckets → 7 slots
+    # 7d timeline: 1-day buckets → 7 slots, anchored to IST midnight so the
+    # last bucket is "today" in the user's local calendar. Anchoring to UTC
+    # midnight off-by-ones the user every evening past 18:30 IST: at 00:35
+    # IST on Apr 28 (= 19:05 UTC Apr 27), a UTC-midnight window ends at
+    # Apr 26 / shows Apr 20-26 — confusing for an Indian-market trader.
+    ist = timezone(timedelta(hours=5, minutes=30))
+    now_ist = now.replace(tzinfo=timezone.utc).astimezone(ist)
+    today_ist_midnight = now_ist.replace(hour=0, minute=0, second=0, microsecond=0)
+    # Convert each IST midnight back to a UTC-naive datetime so buckets line
+    # up with HealthCheck.checked_at (stored UTC-naive).
     slot_7d_seconds = 24 * 3600
     buckets_7d = [
-        (cutoff_7d + timedelta(days=i)).replace(hour=0, minute=0, second=0, microsecond=0)
+        (today_ist_midnight - timedelta(days=6 - i))
+        .astimezone(timezone.utc)
+        .replace(tzinfo=None)
         for i in range(7)
     ]
     slots_7d = _bucket_rows(rows_7d, buckets_7d, slot_7d_seconds, first_probe_at)
