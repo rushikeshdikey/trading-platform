@@ -14,14 +14,23 @@ from . import settings as app_settings
 from .models import CapitalEvent, Trade
 
 
-def _prior_realised_pnl(db: Session, before: date) -> float:
-    """Net realised P&L from trades closed strictly before the given date."""
-    trs = (
+def _prior_realised_pnl(
+    db: Session, before: date, since: date | None = None,
+) -> float:
+    """Net realised P&L from trades closed strictly before ``before``.
+
+    When ``since`` is provided, trades closed before ``since`` are also
+    excluded — used to honour ``starting_capital_date``: anything closed
+    before that anchor is presumed already baked into the starting figure.
+    """
+    q = (
         db.query(Trade)
         .filter(Trade.status == "closed")
         .filter(Trade.close_date < before)
-        .all()
     )
+    if since is not None:
+        q = q.filter(Trade.close_date >= since)
+    trs = q.all()
     return sum(charges_svc.net_pnl(t) for t in trs)
 
 
@@ -111,7 +120,26 @@ def current_capital(db: Session) -> float:
 def build_year(db: Session, year: int) -> tuple[list[MonthRow], YearAggregates, list[dict]]:
     """`year` is interpreted as the FY start year. FY 2025-26 = year 2025."""
     starting_capital = app_settings.get_float(db, "starting_capital", 0.0)
+
+    # ``starting_capital_date`` anchors the starting figure to a calendar
+    # date. Anything that happened BEFORE that date — capital events,
+    # closed-trade P&L — is treated as already baked into ``starting_capital``
+    # and excluded from the running calc, otherwise we'd double-count.
+    # Without this, the user can't do a "fresh start" — every reset has to
+    # also wipe historical events + closed trades, which kills analytics.
+    sc_date_str = app_settings.get(db, "starting_capital_date") or ""
+    try:
+        sc_date = date.fromisoformat(sc_date_str) if sc_date_str else None
+    except ValueError:
+        sc_date = None
+
+    def _after_anchor(d: date) -> bool:
+        return sc_date is None or d >= sc_date
+
     events = db.query(CapitalEvent).all()
+    if sc_date is not None:
+        events = [ev for ev in events if _after_anchor(ev.date)]
+
     year_start = date(year, 4, 1)
     year_end = date(year + 1, 3, 31)
     # Include trades that either opened or closed in this FY.
@@ -125,16 +153,29 @@ def build_year(db: Session, year: int) -> tuple[list[MonthRow], YearAggregates, 
         )
         .all()
     )
+    if sc_date is not None:
+        # Drop trades whose realised P&L pre-dates the anchor — that P&L is
+        # already inside ``starting_capital``. Open / partially-exited trades
+        # without a close_date still show up so the portfolio view works.
+        trades = [
+            t for t in trades
+            if not (t.status == "closed" and t.close_date and not _after_anchor(t.close_date))
+        ]
 
     # Capital baseline at start of this FY =
     #   starting_capital                          (absolute seed)
-    #   + all capital events before FY start       (deposits/withdrawals)
-    #   + realised P&L from trades closed pre-FY   (rolls prior FY trading forward)
+    #   + capital events before FY start (post-anchor only)
+    #   + realised P&L from trades closed pre-FY but post-anchor
+    #
+    # When the anchor is INSIDE this FY, prior_realised_pnl is empty (all
+    # pre-FY closes are also pre-anchor) and the events list is already
+    # filtered, so baseline simply equals starting_capital — exactly the
+    # "fresh start as of this date" semantics the user expects.
     baseline = starting_capital
     for ev in events:
         if ev.date < year_start:
             baseline += ev.amount
-    baseline += _prior_realised_pnl(db, year_start)
+    baseline += _prior_realised_pnl(db, year_start, since=sc_date)
 
     # Group trades by CLOSE month within this FY. Key is calendar month (1–12).
     trades_by_month: dict[int, list[Trade]] = defaultdict(list)
