@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
@@ -224,8 +225,15 @@ def run_all_scans(
     # All detectors, parallel threads. Detectors release the GIL during numpy
     # work so this gives real parallelism on multi-core machines, and at worst
     # is no slower than sequential. RS ratings are precomputed once and shared.
+    #
+    # Cap parallelism at vCPU count (t4g.medium = 2). Spawning 7 threads on
+    # a 2-vCPU box thrashes the CPU and starves gunicorn request workers —
+    # site went down on Run-all-live clicks. With max_workers=2, scans take
+    # roughly 2-3x sequential per scan but the box stays responsive.
+    cpu_count = os.cpu_count() or 2
+    detect_workers = min(len(SCAN_TYPES), max(1, cpu_count))
     detect_started = time.perf_counter()
-    with ThreadPoolExecutor(max_workers=len(SCAN_TYPES)) as ex:
+    with ThreadPoolExecutor(max_workers=detect_workers) as ex:
         future_to_type = {
             ex.submit(_detect_one_timed, scan_type, symbols, bars_map, rs_ratings): scan_type
             for scan_type in SCAN_TYPES
@@ -323,6 +331,14 @@ def _scan_worker(user_id: int | None) -> None:
     so per-user ScanRun inserts succeed."""
     from ..db import SessionLocal
     from ..auth import current_user_id_var
+
+    # Lower this thread's scheduling priority so the OS prefers gunicorn
+    # request workers when CPU is contended. nice(10) ≈ 1/3 the CPU share
+    # of a normal-priority thread but still progresses quickly when idle.
+    try:
+        os.nice(10)
+    except (OSError, AttributeError):
+        pass
 
     global _scan_state
     if user_id is not None:

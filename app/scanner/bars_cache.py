@@ -400,6 +400,14 @@ def _refresh_worker(lookback_days: int) -> None:
     """Worker entrypoint. Owns its own DB session — the request thread that
     spawned us has long since returned."""
     from ..db import SessionLocal
+    import os
+
+    # Lower this thread's scheduling priority — keep request workers responsive
+    # while the multi-minute bhavcopy pull churns through 380 days of CSVs.
+    try:
+        os.nice(10)
+    except (OSError, AttributeError):
+        pass
 
     global _refresh_state
     with SessionLocal() as db:

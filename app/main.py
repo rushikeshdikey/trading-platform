@@ -202,6 +202,62 @@ def _prewarm_scanners_in_background() -> None:
 _prewarm_scanners_in_background()
 
 
+def _maybe_eod_catchup() -> None:
+    """If today is a weekday past 15:35 IST and ScanCache wasn't refreshed
+    after that mark, kick off the EOD pre-warm in a daemon thread.
+
+    APScheduler's CronTrigger only fires while the scheduler is running.
+    Every push restarts the container and any 15:35 IST trigger that came
+    while the old container was being torn down is lost (coalesce only
+    replays misses while the SAME scheduler was alive). Without this
+    catch-up, a deploy that lands during/after the EOD window leaves the
+    cache stale until tomorrow's 15:35.
+    """
+    try:
+        from datetime import datetime, time as dtime
+        from .jobs import IST, _eod_prewarm
+        from .models import ScanCache
+
+        now_ist = datetime.now(IST)
+        # Mon=0 ... Fri=4. Skip weekends — bhavcopy isn't published.
+        if now_ist.weekday() > 4:
+            return
+        # Only catch up if we're past today's 15:35 IST mark.
+        if now_ist.time() < dtime(15, 35):
+            return
+
+        with SessionLocal() as db:
+            # Latest run_at across all scan_types. ScanCache.run_at is
+            # stored in UTC; compare against today's 15:35 IST in UTC.
+            from sqlalchemy import func
+            latest = db.query(func.max(ScanCache.run_at)).scalar()
+
+        from datetime import timezone as _tz
+        cutoff_utc = (
+            now_ist.replace(hour=15, minute=35, second=0, microsecond=0)
+            .astimezone(_tz.utc).replace(tzinfo=None)
+        )
+
+        if latest is not None and latest >= cutoff_utc:
+            return  # Today's EOD already ran.
+
+        import logging
+        logging.getLogger("journal.bootstrap").info(
+            "eod_catchup: latest scan_cache=%s, cutoff_utc=%s — kicking off prewarm",
+            latest, cutoff_utc,
+        )
+        import threading
+        threading.Thread(target=_eod_prewarm, daemon=True).start()
+    except Exception as exc:  # noqa: BLE001
+        import logging
+        logging.getLogger("journal.bootstrap").warning(
+            "eod_catchup check failed (non-fatal): %s", exc,
+        )
+
+
+_maybe_eod_catchup()
+
+
 @app.get("/api/status")
 def api_status(user=Depends(require_user)):
     """Lightweight status summary consumed by the global nav strip."""
@@ -228,9 +284,51 @@ def root():
 
 
 @app.get("/health")
-def health():
-    """Public — used by uptime checks."""
-    return {"ok": True, "today": date.today().isoformat()}
+def health(request: Request):
+    """Public — content-negotiated.
+
+    Browsers (Accept: text/html) see a subsystem dashboard; uptime checkers
+    and curl with default ``Accept: */*`` get a JSON probe response. The
+    JSON response is intentionally minimal — Caddy + docker-compose
+    healthchecks rely on a 2xx status, not the body.
+    """
+    accept = (request.headers.get("accept") or "").lower()
+    wants_html = "text/html" in accept
+    if not wants_html:
+        return {"ok": True, "today": date.today().isoformat()}
+
+    # HTML path — render the subsystem dashboard.
+    from .deps import templates
+    from . import health_snapshot as hs
+    with SessionLocal() as db:
+        snapshot = hs.build_snapshot(db)
+    return templates.TemplateResponse(
+        request, "health.html", {"snapshot": snapshot},
+    )
+
+
+@app.get("/health.json")
+def health_json():
+    """JSON-only health snapshot — for uptime checkers that want detail."""
+    from . import health_snapshot as hs
+    with SessionLocal() as db:
+        snapshot = hs.build_snapshot(db)
+    return {
+        "ok": snapshot.overall == "ok",
+        "overall": snapshot.overall,
+        "generated_at": snapshot.generated_at.isoformat(),
+        "subsystems": [
+            {
+                "key": s.key,
+                "name": s.name,
+                "status": s.status,
+                "headline": s.headline,
+                "detail": s.detail,
+                "metrics": s.metrics,
+            }
+            for s in snapshot.subsystems
+        ],
+    }
 
 
 # Public auth routes (login/setup/logout/change-password). These define their

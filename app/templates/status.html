@@ -36,6 +36,15 @@
     .slot.amber   { background: #f59e0b; }
     .slot.red     { background: #ef4444; }
     .slot.no-data { background: #e4e4e7; }
+    /* Pre-deploy: bucket pre-dates first probe row → not a downtime
+       signal, just "feature didn't exist yet". Striped to read as
+       distinct from the solid grey "real downtime" buckets. */
+    .slot.pre-deploy {
+      background: repeating-linear-gradient(
+        45deg, #f4f4f5 0 4px, #fafafa 4px 8px
+      );
+      border: 1px dashed #d4d4d8;
+    }
     .timeline-axis { display: flex; justify-content: space-between; margin-top: 0.5rem; font-size: 0.7rem; color: #a1a1aa; }
     .legend { display: flex; gap: 1rem; margin-top: 1rem; font-size: 0.75rem; color: #71717a; }
     .legend-item { display: flex; align-items: center; gap: 0.4rem; }
@@ -75,7 +84,7 @@
       </div>
       <div class="timeline">
         {% for slot in summary.slots_24h %}
-          <div class="slot {{ slot.color }}" title="{{ slot.label }} · {% if slot.no_data %}no data (likely down){% else %}{{ slot.ok_count }} ok / {{ slot.fail_count }} fail{% if slot.avg_ms is not none %} · {{ slot.avg_ms }}ms avg{% endif %}{% endif %}"></div>
+          <div class="slot {{ slot.color }}" title="{{ slot.label }} · {% if slot.pre_deploy %}before health probe loop existed{% elif slot.no_data %}no data (likely down){% else %}{{ slot.ok_count }} ok / {{ slot.fail_count }} fail{% if slot.avg_ms is not none %} · {{ slot.avg_ms }}ms avg{% endif %}{% endif %}"></div>
         {% endfor %}
       </div>
       <div class="timeline-axis">
@@ -92,7 +101,7 @@
       </div>
       <div class="timeline timeline-7d">
         {% for slot in summary.slots_7d %}
-          <div class="slot {{ slot.color }}" title="{{ slot.label }} · {% if slot.no_data %}no data{% else %}{{ slot.ok_count }} ok / {{ slot.fail_count }} fail{% endif %}"></div>
+          <div class="slot {{ slot.color }}" title="{{ slot.label }} · {% if slot.pre_deploy %}before health probe loop existed{% elif slot.no_data %}no data{% else %}{{ slot.ok_count }} ok / {{ slot.fail_count }} fail{% endif %}"></div>
         {% endfor %}
       </div>
       <div class="timeline-axis">
@@ -106,7 +115,8 @@
         <div class="legend-item"><span class="legend-dot" style="background:#10b981"></span> All probes ok</div>
         <div class="legend-item"><span class="legend-dot" style="background:#f59e0b"></span> Some failures</div>
         <div class="legend-item"><span class="legend-dot" style="background:#ef4444"></span> Mostly failed</div>
-        <div class="legend-item"><span class="legend-dot" style="background:#e4e4e7"></span> No data (app down)</div>
+        <div class="legend-item"><span class="legend-dot" style="background:#e4e4e7"></span> Downtime (gap in probes)</div>
+        <div class="legend-item"><span class="legend-dot" style="background: repeating-linear-gradient(45deg,#f4f4f5 0 4px,#fafafa 4px 8px); border:1px dashed #d4d4d8"></span> No probe history yet</div>
       </div>
     </div>
 

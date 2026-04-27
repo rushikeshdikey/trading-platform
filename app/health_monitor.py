@@ -71,15 +71,25 @@ def probe_and_log() -> None:
 @dataclass
 class StatusSlot:
     """One bucket on the timeline — green (all probes ok), red (any
-    probe failed), or grey (no data — app was likely down)."""
+    probe failed), or grey (no data — app was likely down).
+
+    ``pre_deploy=True`` means the bucket pre-dates the very first probe
+    row in the database — i.e., the probe loop didn't EXIST yet, so the
+    absence of data is not a downtime signal. Rendered with a distinct
+    style so users don't misread "feature didn't ship yet" as "app was
+    down for 6 days".
+    """
     label: str            # "14:35" or "Apr 27"
     ok_count: int
     fail_count: int
-    no_data: bool         # true if 0 probes — implicit downtime
+    no_data: bool         # true if 0 probes
     avg_ms: int | None    # average response time, or None if no data
+    pre_deploy: bool = False
 
     @property
     def color(self) -> str:
+        if self.pre_deploy:
+            return "pre-deploy"
         if self.no_data:
             return "no-data"
         if self.fail_count > 0:
@@ -100,9 +110,19 @@ class StatusSummary:
     total_failures_24h: int
 
 
-def _bucket_rows(rows: Iterable[HealthCheck], buckets: list[datetime], slot_seconds: int) -> list[StatusSlot]:
+def _bucket_rows(
+    rows: Iterable[HealthCheck],
+    buckets: list[datetime],
+    slot_seconds: int,
+    first_probe_at: datetime | None = None,
+) -> list[StatusSlot]:
     """Slot HealthCheck rows into time buckets. ``buckets`` is the list
-    of bucket-START datetimes; rows are placed by their checked_at."""
+    of bucket-START datetimes; rows are placed by their checked_at.
+
+    Buckets whose END is before ``first_probe_at`` are stamped with
+    ``pre_deploy=True`` so the UI can distinguish "probe loop didn't
+    exist yet" from "app was down".
+    """
     by_bucket: dict[int, list[HealthCheck]] = defaultdict(list)
     bucket_starts = [b.timestamp() for b in buckets]
     for r in rows:
@@ -123,6 +143,12 @@ def _bucket_rows(rows: Iterable[HealthCheck], buckets: list[datetime], slot_seco
         fail = sum(1 for r in chunk if not r.ok)
         no_data = len(chunk) == 0
         avg_ms = int(sum(r.response_ms or 0 for r in chunk) / len(chunk)) if chunk else None
+        bucket_end = start + timedelta(seconds=slot_seconds)
+        pre_deploy = (
+            no_data
+            and first_probe_at is not None
+            and bucket_end <= first_probe_at
+        )
         # Label: HH:MM for ≤ 1h slots, "MMM DD" for daily slots.
         if slot_seconds < 3600:
             label = start.strftime("%H:%M")
@@ -130,7 +156,7 @@ def _bucket_rows(rows: Iterable[HealthCheck], buckets: list[datetime], slot_seco
             label = start.strftime("%b %d")
         out.append(StatusSlot(
             label=label, ok_count=ok, fail_count=fail,
-            no_data=no_data, avg_ms=avg_ms,
+            no_data=no_data, avg_ms=avg_ms, pre_deploy=pre_deploy,
         ))
     return out
 
@@ -154,13 +180,21 @@ def build_summary(db: Session) -> StatusSummary:
         .all()
     )
 
+    # Earliest probe row IN THE WHOLE TABLE — used to mark buckets that
+    # pre-date the probe loop existing as "no service history yet"
+    # rather than "app was down". Without this, a brand-new prod looks
+    # like 6 days of downtime in the 7-day chart.
+    first_probe_at = (
+        db.query(func.min(HealthCheck.checked_at)).scalar()
+    )
+
     # 24h timeline: 5-minute buckets → 288 slots
     slot_24h_seconds = 5 * 60
     n_24h = (24 * 3600) // slot_24h_seconds
     buckets_24h = [
         cutoff_24h + timedelta(seconds=i * slot_24h_seconds) for i in range(n_24h)
     ]
-    slots_24h = _bucket_rows(rows_24h, buckets_24h, slot_24h_seconds)
+    slots_24h = _bucket_rows(rows_24h, buckets_24h, slot_24h_seconds, first_probe_at)
 
     # 7d timeline: 1-day buckets → 7 slots
     slot_7d_seconds = 24 * 3600
@@ -168,7 +202,7 @@ def build_summary(db: Session) -> StatusSummary:
         (cutoff_7d + timedelta(days=i)).replace(hour=0, minute=0, second=0, microsecond=0)
         for i in range(7)
     ]
-    slots_7d = _bucket_rows(rows_7d, buckets_7d, slot_7d_seconds)
+    slots_7d = _bucket_rows(rows_7d, buckets_7d, slot_7d_seconds, first_probe_at)
 
     n_24h_probes = len(rows_24h)
     n_24h_fails = sum(1 for r in rows_24h if not r.ok)

@@ -47,7 +47,14 @@
     {% endif %}
   </div>
   {% endif %}
-  {% if refresh == 'started' %}<div class="p-3 rounded-lg bg-sky-50 border border-sky-200 text-sky-800 text-sm"><strong>Bars refresh started in background.</strong> Pulling up to 380 days from NSE + BSE (≈ 252 trading bars — needed for Minervini Trend Template). First run on a shallow cache takes 20-40 minutes. Reload the page to see the Bars count tick up.</div>
+  {% if refresh == 'started' %}
+    {% if cache.rows and cache.rows > 200000 %}
+      {# Warm cache — incremental refresh only fetches today's bhavcopy. #}
+      <div class="p-3 rounded-lg bg-sky-50 border border-sky-200 text-sky-800 text-sm"><strong>Bars refresh started.</strong> Cache already has {{ '{:,}'.format(cache.rows) }} rows; this run only pulls any missing days from NSE + BSE — usually 5-30 sec. Reload the page in a moment.</div>
+    {% else %}
+      {# Cold cache — full 380-day backfill. Slow first time. #}
+      <div class="p-3 rounded-lg bg-sky-50 border border-sky-200 text-sky-800 text-sm"><strong>Bars refresh started (cold cache).</strong> Pulling 380 days from NSE + BSE — takes 20-40 min on first run. Reload the page to watch the Bars count climb.</div>
+    {% endif %}
   {% elif refresh == 'already_running' %}<div class="p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm"><strong>Bars refresh already running.</strong> Wait for it to finish before kicking off another.</div>
   {% elif refresh %}<div class="p-3 rounded-lg bg-sky-50 border border-sky-200 text-sky-800 text-sm"><strong>Bars cache refreshed:</strong> <span class="tabular-nums">{{ refresh }}</span></div>{% endif %}
 
@@ -236,6 +243,26 @@
     {% if not unified.rows %}
     <div class="p-6 text-sm text-zinc-500">No candidates today across any scanner. Markets change — check back tomorrow.</div>
     {% else %}
+    <!-- Search across all 4 scanners -->
+    <div class="px-4 sm:px-6 py-3 border-b border-zinc-100 flex items-center gap-3">
+      <div class="relative flex-1 max-w-md">
+        <i data-lucide="search" class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none"></i>
+        <input type="search"
+               x-model="searchQuery"
+               @input="persist()"
+               placeholder="Search {{ unified.rows|length }} candidates by symbol or setup…"
+               class="w-full pl-9 pr-9 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-zinc-900 focus:border-zinc-900 placeholder:text-zinc-400">
+        <button type="button"
+                x-show="searchQuery.length > 0"
+                @click="searchQuery = ''; persist()"
+                class="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-zinc-100 text-zinc-500"
+                title="Clear search">
+          <i data-lucide="x" class="w-3.5 h-3.5"></i>
+        </button>
+      </div>
+      <span class="text-xs text-zinc-500 tabular-nums hidden sm:inline" x-text="visibleCount + ' / {{ unified.rows|length }}'"></span>
+    </div>
+
     <!-- Per-scan summary chips -->
     <div class="px-6 py-3 border-b border-zinc-100 flex flex-wrap gap-2 text-xs">
       {% for st_key, summary in unified.scan_summary.items() %}
@@ -937,6 +964,7 @@
         priceMax: null,
         onlyWatchlist: false,
         hideWatchlist: false,
+        searchQuery: '',
 
         // Sort
         sortKey: 'tier',
@@ -955,6 +983,7 @@
             if ('priceMax' in saved)      this.priceMax = saved.priceMax;
             if ('onlyWatchlist' in saved) this.onlyWatchlist = saved.onlyWatchlist;
             if ('hideWatchlist' in saved) this.hideWatchlist = saved.hideWatchlist;
+            if (typeof saved.searchQuery === 'string') this.searchQuery = saved.searchQuery;
             if (saved.sortKey)            this.sortKey = saved.sortKey;
             if (typeof saved.sortDir === 'number') this.sortDir = saved.sortDir;
           } catch(e) {}
@@ -966,6 +995,7 @@
               setupFilter: this.setupFilter, tierFilter: this.tierFilter,
               priceMin: this.priceMin, priceMax: this.priceMax,
               onlyWatchlist: this.onlyWatchlist, hideWatchlist: this.hideWatchlist,
+              searchQuery: this.searchQuery,
               sortKey: this.sortKey, sortDir: this.sortDir,
             }));
           } catch(e) {}
@@ -977,6 +1007,7 @@
           this.priceMax = null;
           this.onlyWatchlist = false;
           this.hideWatchlist = false;
+          this.searchQuery = '';
           this.persist();
         },
 
@@ -991,6 +1022,12 @@
           if (this.priceMax != null && m.close > this.priceMax) return false;
           if (this.onlyWatchlist && !m.watching) return false;
           if (this.hideWatchlist && m.watching) return false;
+          // Search — substring match on symbol or any setup-type token.
+          const q = (this.searchQuery || '').trim().toLowerCase();
+          if (q.length > 0) {
+            const hay = (m.symbol + ' ' + m.setups.join(' ')).toLowerCase();
+            if (!hay.includes(q)) return false;
+          }
           return true;
         },
         get visibleCount() {
