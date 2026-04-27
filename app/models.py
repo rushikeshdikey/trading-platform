@@ -168,7 +168,11 @@ class ImportedExecution(Base):
     applied_to_trade_id: Mapped[int | None] = mapped_column(
         ForeignKey("trades.id", ondelete="SET NULL"), nullable=True
     )
-    imported_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    # Nullable in the deployed schema (post per-user-data scope migration);
+    # the Python default fills it in on every insert.
+    imported_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True, default=datetime.utcnow,
+    )
 
 
 class HealthCheck(Base):
@@ -184,7 +188,12 @@ class HealthCheck(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     checked_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
     ok: Mapped[bool] = mapped_column(Boolean, nullable=False)
-    response_ms: Mapped[int] = mapped_column(Integer, default=0)
+    # Nullable in the deployed schema (server_default="0" backfills NULLs).
+    # Code always populates this on insert, but the model has to match the
+    # migration or `alembic check` flags drift.
+    response_ms: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, server_default="0", default=0,
+    )
     error: Mapped[str | None] = mapped_column(String, nullable=True)
 
 

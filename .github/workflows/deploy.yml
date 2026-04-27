@@ -1,7 +1,14 @@
 name: Deploy
 
+# Gate every deploy on CI green. `workflow_run` fires after the CI workflow
+# completes; the `if` below skips the deploy unless CI's conclusion was
+# `success`. This means a failed `alembic check` or `pytest` run blocks
+# prod from being touched. `workflow_dispatch` is kept so the user can
+# still force a deploy manually if they need to bypass for any reason.
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
 
@@ -25,10 +32,18 @@ jobs:
     # deterministic (the previous emulated build occasionally raced the
     # SSM upload step and left deploys in mixed states).
     runs-on: ubuntu-24.04-arm
+    # Skip unless CI was successful (or this is a manual workflow_dispatch
+    # run, which has no `workflow_run` event attached).
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     outputs:
       image_tag: ${{ steps.meta.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # workflow_run runs against the default branch by default; pin to
+          # the exact commit that CI green-lit so the image we build matches
+          # what was tested.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - uses: docker/setup-buildx-action@v3
 
@@ -42,7 +57,11 @@ jobs:
       - name: Compute image tag
         id: meta
         run: |
-          SHA="${GITHUB_SHA::7}"
+          # On workflow_run, GITHUB_SHA points to the default branch HEAD
+          # at the time `workflow_run` fired — not necessarily the commit
+          # CI tested. Use head_sha from the upstream run when present.
+          SHA_RAW="${{ github.event.workflow_run.head_sha || github.sha }}"
+          SHA="${SHA_RAW::7}"
           echo "tag=${SHA}" >> "$GITHUB_OUTPUT"
 
       - name: Build + push (linux/arm64 — t4g.micro is Graviton)
@@ -63,6 +82,8 @@ jobs:
     needs: build-and-push
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
