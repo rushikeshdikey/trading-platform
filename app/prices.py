@@ -136,13 +136,18 @@ def _resolve_via_kite(db: Session, symbol: str) -> tuple[str, str] | None:
 
     Handles NSE/BSE/SME correctly: ``ALPEXSOLAR`` → (``ALPEXSOLAR-SM``, ``.NS``),
     ``539195`` → (``POEL``, ``.BO``), ``SKP-SM`` → (``SKP-SM``, ``.NS``).
-    Returns None if Kite isn't authed or the symbol isn't in the master.
+    Returns None if the symbol isn't in the master.
+
+    The ``kite_instruments`` table is SHARED — populated whenever ANY user
+    clicks "Sync instruments". No per-user auth check needed: if the row
+    exists we use it. (Earlier code called ``is_authed(db)`` here, but
+    ``is_authed`` takes a User — the AttributeError was being silently
+    eaten by the except clause and the Kite-authoritative path NEVER ran.
+    Result: every NSE-SME symbol with a ``-SM`` suffix on Kite was falling
+    through to the bare-symbol heuristic and failing on Yahoo.)
     """
     try:
         from . import kite as kite_svc
-
-        if not kite_svc.is_authed(db):
-            return None
         inst = kite_svc._resolve_instrument(db, symbol)
     except Exception as exc:  # noqa: BLE001
         log.debug("kite resolve failed for %s: %s", symbol, exc)
