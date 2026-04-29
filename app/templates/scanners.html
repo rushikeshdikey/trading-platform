@@ -9,7 +9,8 @@
       <h1 class="text-2xl font-semibold tracking-tight">Scanners</h1>
       <p class="text-zinc-500 text-sm mt-1 max-w-3xl">
         EOD swing setups across the Nifty Total Market index plus liquid non-index names with bars.
-        Auto-refreshed at 15:35 IST every weekday.
+        Auto-refresh runs at 15:35 IST every weekday <em class="not-italic text-zinc-400">— when the app is alive at that minute.</em>
+        Boot also tries a one-shot catch-up if the cache missed today's window.
       </p>
     </div>
     <div class="flex items-center gap-2">
@@ -181,8 +182,17 @@
             {% set r = unified.regime %}
             <span class="pill text-[10px] {% if r.is_blocked %}bg-rose-100 text-rose-800 border-rose-300{% elif r.multiplier >= 1.0 %}bg-emerald-100 text-emerald-800 border-emerald-300{% elif r.multiplier >= 0.9 %}bg-emerald-50 text-emerald-700 border-emerald-200{% else %}bg-amber-50 text-amber-700 border-amber-200{% endif %}" title="Regime multiplier {{ '%.1f'|format(r.multiplier) }} — multiplies every candidate's composite score">Regime: {{ r.label }}</span>
           {% endif %}
-          <span>Cached at {{ unified.oldest_run_at.strftime('%H:%M') }} IST today · live re-run took {{ unified.total_elapsed_ms }}ms total</span>
-          <span class="text-emerald-700">Loaded from cache · &lt; 50ms</span>
+          {% set age_h = unified.cache_age_hours %}
+          {% if age_h < 6 %}
+            <span class="text-emerald-700" title="Cache run_at: {{ unified.oldest_run_at }} UTC">Cached {{ '%.1f'|format(age_h) }}h ago · fresh</span>
+          {% elif age_h < 24 %}
+            <span class="text-zinc-600" title="Cache run_at: {{ unified.oldest_run_at }} UTC">Cached {{ '%.0f'|format(age_h) }}h ago</span>
+          {% elif age_h < 48 %}
+            <span class="text-amber-700 font-semibold" title="Cache run_at: {{ unified.oldest_run_at }} UTC">⚠ Stale: {{ '%.0f'|format(age_h) }}h old · re-run scanners</span>
+          {% else %}
+            <span class="text-rose-700 font-bold" title="Cache run_at: {{ unified.oldest_run_at }} UTC">⚠ STALE: {{ '%.0f'|format(age_h / 24) }}d old · auto-refresh missed · click Run all live</span>
+          {% endif %}
+          <span class="text-zinc-500">re-run takes {{ unified.total_elapsed_ms }}ms</span>
         </div>
       </div>
 

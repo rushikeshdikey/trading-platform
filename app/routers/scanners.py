@@ -195,6 +195,13 @@ def _build_unified_results(db: Session) -> dict | None:
     universe_size = max((rows[st].universe_size for st in rows), default=0)
     total_elapsed = sum(rows[st].elapsed_ms for st in rows)
 
+    # Cache age in hours — used by the template to flag staleness loudly.
+    # The page text on the home banner promises "auto-refreshed at 15:35
+    # IST every weekday", which is a lie when the scheduler missed (laptop
+    # asleep, deploy gap, uvicorn reload kill). Surface the truth.
+    from datetime import datetime as _dt
+    cache_age_hours = (_dt.utcnow() - oldest_run_at).total_seconds() / 3600.0
+
     return {
         "rows": out_rows,
         "scan_runs": rows,           # dict[scan_type] -> ScanCache row
@@ -206,6 +213,7 @@ def _build_unified_results(db: Session) -> dict | None:
         "capital": capital,
         "regime": regime,
         "sector_tagged_count": len(quadrant_map),
+        "cache_age_hours": round(cache_age_hours, 1),
         "scan_summary": {
             scan_type: {
                 "label": SCAN_TYPES[scan_type][0],

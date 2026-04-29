@@ -203,16 +203,40 @@ def _prewarm_scanners_in_background() -> None:
 _prewarm_scanners_in_background()
 
 
+def _claim_eod_catchup(db, today_date) -> bool:
+    """DB-atomic leader claim — only one worker proceeds, even if N
+    workers boot at the same second. Uses ScanHistory's UNIQUE index on
+    (scan_date, scan_type) as the mutex. INSERT-then-rollback is the
+    portable claim pattern (works on SQLite + Postgres).
+    """
+    from sqlalchemy.exc import IntegrityError
+    from datetime import datetime as _dt
+    from .models import ScanHistory
+    try:
+        db.add(ScanHistory(
+            scan_date=today_date, scan_type="_eod_catchup_lock",
+            run_at=_dt.utcnow(),
+            universe_size=0, candidates_count=0, elapsed_ms=0, payload="{}",
+        ))
+        db.commit()
+        return True
+    except IntegrityError:
+        db.rollback()
+        return False
+
+
 def _maybe_eod_catchup() -> None:
     """If today is a weekday past 15:35 IST and ScanCache wasn't refreshed
     after that mark, kick off the EOD pre-warm in a daemon thread.
 
     APScheduler's CronTrigger only fires while the scheduler is running.
-    Every push restarts the container and any 15:35 IST trigger that came
-    while the old container was being torn down is lost (coalesce only
-    replays misses while the SAME scheduler was alive). Without this
-    catch-up, a deploy that lands during/after the EOD window leaves the
-    cache stale until tomorrow's 15:35.
+    On dev (uvicorn --reload kills/respawns the worker on every save) and
+    on missed deploys, the 15:35 trigger is silently lost. Without this
+    catch-up, the cache stays stale until tomorrow's 15:35.
+
+    Multi-worker safety: claims the run via ScanHistory(_eod_catchup_lock),
+    a UNIQUE-indexed row keyed on today's date. Only the first worker to
+    INSERT wins; the rest see IntegrityError and skip. No CPU storm.
     """
     try:
         from datetime import datetime, time as dtime
@@ -233,14 +257,22 @@ def _maybe_eod_catchup() -> None:
             from sqlalchemy import func
             latest = db.query(func.max(ScanCache.run_at)).scalar()
 
-        from datetime import timezone as _tz
-        cutoff_utc = (
-            now_ist.replace(hour=15, minute=35, second=0, microsecond=0)
-            .astimezone(_tz.utc).replace(tzinfo=None)
-        )
+            from datetime import timezone as _tz
+            cutoff_utc = (
+                now_ist.replace(hour=15, minute=35, second=0, microsecond=0)
+                .astimezone(_tz.utc).replace(tzinfo=None)
+            )
 
-        if latest is not None and latest >= cutoff_utc:
-            return  # Today's EOD already ran.
+            if latest is not None and latest >= cutoff_utc:
+                return  # Today's EOD already ran.
+
+            # DB-atomic claim. Only one worker proceeds to do the heavy work.
+            if not _claim_eod_catchup(db, now_ist.date()):
+                import logging
+                logging.getLogger("journal.bootstrap").info(
+                    "eod_catchup: another worker claimed today's catchup — skipping",
+                )
+                return
 
         import logging
         logging.getLogger("journal.bootstrap").info(
@@ -256,13 +288,7 @@ def _maybe_eod_catchup() -> None:
         )
 
 
-# Boot-time EOD catch-up is intentionally NOT called here. Calling it at
-# module top-level meant every gunicorn worker process kicked off the
-# prewarm in a daemon thread on boot — 2-4 workers × 1 prewarm-with-7-detector
-# threads each storms a 2-vCPU box and starves request workers. Until we add
-# a multi-process leader election (file lock, redis, or a separate scheduler
-# container), the in-process APScheduler at 15:35 IST is the only EOD trigger.
-# A deploy that lands AFTER 15:35 will leave the cache stale until tomorrow.
+_maybe_eod_catchup()
 
 
 @app.get("/api/status")
