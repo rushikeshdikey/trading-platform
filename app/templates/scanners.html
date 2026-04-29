@@ -161,7 +161,7 @@
   {# ====================== UNIFIED RESULTS (cached) ===================== #}
   {% if unified %}
   {% set _row_meta = [] %}
-  {% for row in unified.rows %}{% set _ = _row_meta.append({"symbol": row.symbol, "tier": row.tier, "close": row.primary.close, "watching": row.on_watchlist, "setups": row.scans|map(attribute="type")|list}) %}{% endfor %}
+  {% for row in unified.rows %}{% set _ = _row_meta.append({"symbol": row.symbol, "tier": row.tier, "close": row.primary.close, "composite": row.composite, "watching": row.on_watchlist, "setups": row.scans|map(attribute="type")|list}) %}{% endfor %}
 
   <div class="card"
        x-data='unifiedScanner({{ _row_meta|tojson }}, "Multi-scan")'
@@ -172,8 +172,15 @@
           <i data-lucide="target" class="w-4 h-4 text-zinc-500"></i>
           {{ unified.rows|length }} candidates across all 4 scanners
         </div>
-        <div class="card-description flex flex-wrap gap-x-3">
+        <div class="card-description flex flex-wrap gap-x-3 items-center">
           <span>Universe {{ unified.universe_size }}</span>
+          {% if unified.sector_tagged_count %}
+            <span title="Symbols with sector quadrant context">{{ unified.sector_tagged_count }} sector-tagged</span>
+          {% endif %}
+          {% if unified.regime %}
+            {% set r = unified.regime %}
+            <span class="pill text-[10px] {% if r.is_blocked %}bg-rose-100 text-rose-800 border-rose-300{% elif r.multiplier >= 1.0 %}bg-emerald-100 text-emerald-800 border-emerald-300{% elif r.multiplier >= 0.9 %}bg-emerald-50 text-emerald-700 border-emerald-200{% else %}bg-amber-50 text-amber-700 border-amber-200{% endif %}" title="Regime multiplier {{ '%.1f'|format(r.multiplier) }} — multiplies every candidate's composite score">Regime: {{ r.label }}</span>
+          {% endif %}
           <span>Cached at {{ unified.oldest_run_at.strftime('%H:%M') }} IST today · live re-run took {{ unified.total_elapsed_ms }}ms total</span>
           <span class="text-emerald-700">Loaded from cache · &lt; 50ms</span>
         </div>
@@ -394,6 +401,9 @@
                 Symbol <span x-show="sortKey === 'symbol'" x-text="sortDir > 0 ? '▲' : '▼'" class="text-zinc-400"></span>
               </th>
               <th>Setups</th>
+              <th class="cursor-pointer select-none" @click="sortBy('composite')" title="Composite score: scanner score × confluence × RS × Minervini × sector × regime. The canonical ranking — Auto-Pilot picks from this.">
+                CS <span x-show="sortKey === 'composite'" x-text="sortDir > 0 ? '▲' : '▼'" class="text-zinc-400"></span>
+              </th>
               <th class="cursor-pointer select-none" @click="sortBy('score')">
                 Score <span x-show="sortKey === 'score'" x-text="sortDir > 0 ? '▲' : '▼'" class="text-zinc-400"></span>
               </th>
@@ -433,7 +443,12 @@
               <td class="!py-1">
                 {% if row.sparkline %}{{ row.sparkline|safe }}{% else %}<span class="text-zinc-300 text-xs">—</span>{% endif %}
               </td>
-              <td class="font-semibold">{{ c.symbol }}</td>
+              <td>
+                <div class="font-semibold">{{ c.symbol }}</div>
+                {% if row.sector_quadrant %}
+                  <span title="RRG quadrant" class="pill text-[9px] {% if row.sector_quadrant == 'Leading' %}bg-emerald-100 text-emerald-800 border-emerald-300{% elif row.sector_quadrant == 'Improving' %}bg-sky-50 text-sky-800 border-sky-200{% elif row.sector_quadrant == 'Weakening' %}bg-amber-50 text-amber-800 border-amber-200{% else %}bg-rose-50 text-rose-800 border-rose-200{% endif %}">{{ row.sector_quadrant }}</span>
+                {% endif %}
+              </td>
               <td>
                 <div class="flex flex-wrap gap-1">
                   {% for sc in row.scans %}
@@ -443,7 +458,8 @@
                   {% endfor %}
                 </div>
               </td>
-              <td class="tabular-nums font-semibold">{{ '{:.0f}'.format(c.score) }}</td>
+              <td class="tabular-nums font-bold {% if row.composite and row.composite >= 90 %}text-emerald-700{% elif row.composite and row.composite >= 70 %}text-emerald-600{% elif row.composite and row.composite >= 45 %}text-zinc-700{% else %}text-zinc-400{% endif %}" title="{{ row.tier_reason }}">{{ '{:.0f}'.format(row.composite) if row.composite is not none else '—' }}</td>
+              <td class="tabular-nums">{{ '{:.0f}'.format(c.score) }}</td>
               <td class="tabular-nums">₹{{ '{:,.2f}'.format(c.close) }}</td>
               <td class="tabular-nums font-semibold">₹{{ '{:,.2f}'.format(c.suggested_entry) }}</td>
               <td class="tabular-nums text-rose-700">₹{{ '{:,.2f}'.format(c.suggested_sl) }}</td>
@@ -501,6 +517,12 @@
                   {% elif row.tier == 'A' %}bg-emerald-50 text-emerald-700 border-emerald-200
                   {% else %}bg-zinc-100 text-zinc-700 border-zinc-200{% endif %}">{{ row.tier }}</span>
                 <span class="font-semibold text-base">{{ c.symbol }}</span>
+                {% if row.composite %}
+                  <span title="Composite score" class="pill text-[10px] bg-zinc-100 text-zinc-700 border-zinc-200 font-bold tabular-nums">CS {{ '%.0f'|format(row.composite) }}</span>
+                {% endif %}
+                {% if row.sector_quadrant %}
+                  <span class="pill text-[9px] {% if row.sector_quadrant == 'Leading' %}bg-emerald-100 text-emerald-800 border-emerald-300{% elif row.sector_quadrant == 'Improving' %}bg-sky-50 text-sky-800 border-sky-200{% elif row.sector_quadrant == 'Weakening' %}bg-amber-50 text-amber-800 border-amber-200{% else %}bg-rose-50 text-rose-800 border-rose-200{% endif %}">{{ row.sector_quadrant }}</span>
+                {% endif %}
                 {% if row.sparkline %}<span class="ml-auto">{{ row.sparkline|safe }}</span>{% endif %}
               </div>
               <div class="flex flex-wrap gap-1 mt-1">
@@ -967,7 +989,7 @@
         searchQuery: '',
 
         // Sort
-        sortKey: 'tier',
+        sortKey: 'composite',  // composite is the canonical ranking — Auto-Pilot uses it
         sortDir: 1,        // 1 desc (A+ first / largest first), -1 asc
 
         // Keyboard cursor — index in rowMeta of the highlighted row, or -1.
@@ -1056,12 +1078,14 @@
             const valA = key === 'tier' ? tierRank[ma.tier] || 0
                        : key === 'symbol' ? ma.symbol
                        : key === 'close' ? ma.close
-                       : key === 'score' ? parseFloat(a.querySelector('td:nth-child(6)')?.textContent || 0)
+                       : key === 'composite' ? (ma.composite || 0)
+                       : key === 'score' ? parseFloat(a.querySelector('td:nth-child(7)')?.textContent || 0)
                        : 0;
             const valB = key === 'tier' ? tierRank[mb.tier] || 0
                        : key === 'symbol' ? mb.symbol
                        : key === 'close' ? mb.close
-                       : key === 'score' ? parseFloat(b.querySelector('td:nth-child(6)')?.textContent || 0)
+                       : key === 'composite' ? (mb.composite || 0)
+                       : key === 'score' ? parseFloat(b.querySelector('td:nth-child(7)')?.textContent || 0)
                        : 0;
             if (valA < valB) return -1 * dir;
             if (valA > valB) return  1 * dir;
