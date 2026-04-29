@@ -7,6 +7,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     LargeBinary,
     String,
@@ -336,9 +337,20 @@ class ScanHistory(Base):
     """
 
     __tablename__ = "scan_history"
+    # Composite unique index on (scan_date, scan_type) — declared here so
+    # alembic-autogenerate doesn't see drift against the migration that
+    # creates ix_scan_history_date_type. Doubles as the DB-atomic mutex
+    # for _maybe_eod_catchup (see app/main.py::_claim_eod_catchup).
+    __table_args__ = (
+        Index(
+            "ix_scan_history_date_type",
+            "scan_date", "scan_type",
+            unique=True,
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    scan_date: Mapped[Date] = mapped_column(Date, nullable=False, index=True)
+    scan_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     scan_type: Mapped[str] = mapped_column(String, nullable=False, index=True)
     run_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     universe_size: Mapped[int] = mapped_column(Integer, default=0)
