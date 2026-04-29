@@ -8,6 +8,8 @@ data/*.db-journal
 data/*.db.backup-*
 data/*.db.pre-*
 data/*.csv
+# Exception: industry_overrides.csv is hand-curated code, not cached data.
+!data/industry_overrides.csv
 .DS_Store
 .env
 .idea/

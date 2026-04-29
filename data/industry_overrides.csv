@@ -1,0 +1,302 @@
+symbol,industry
+# ============================================================================
+# Sub-industry overrides — refines NSE Total Market's coarse 22-sector
+# taxonomy into Screener.in-style ~58-industry granularity.
+#
+# Why: NSE lumps "Banks", "Capital Markets", "NBFC", "Insurance",
+# "Holding Company", "Financial Tech" all under "Financial Services" (121
+# stocks). RRG quadrant on that bucket is meaningless because Banks can be
+# Lagging while Capital Markets is Leading. Splitting fixes the signal.
+#
+# Format: symbol,override_industry
+# Lines starting with # are ignored.
+# Symbols not listed here keep their default Industry from the NSE CSV.
+#
+# Maintenance: append new rows when NSE adds names you trade in. Most
+# entries are stable — only re-categorise on actual taxonomy changes.
+# ============================================================================
+
+# === Capital Markets (split from Financial Services) ========================
+BSE,Capital Markets
+MCX,Capital Markets
+IEX,Capital Markets
+ANGELONE,Capital Markets
+MOTILALOFS,Capital Markets
+NUVAMA,Capital Markets
+IIFL,Capital Markets
+IIFLSEC,Capital Markets
+ISEC,Capital Markets
+CDSL,Capital Markets
+KFINTECH,Capital Markets
+CAMS,Capital Markets
+NAM-INDIA,Capital Markets
+HDFCAMC,Capital Markets
+UTIAMC,Capital Markets
+ABSLAMC,Capital Markets
+JMFINANCIL,Capital Markets
+ANANDRATHI,Capital Markets
+PRUDENT,Capital Markets
+GEOJITFSL,Capital Markets
+SHAREINDIA,Capital Markets
+EMUDHRA,Capital Markets
+360ONE,Capital Markets
+TECHINDIA,Capital Markets
+SMCGLOBAL,Capital Markets
+CHOICEIN,Capital Markets
+
+# === Insurance (split from Financial Services) ==============================
+LICI,Insurance
+SBILIFE,Insurance
+HDFCLIFE,Insurance
+ICICIPRULI,Insurance
+ICICIGI,Insurance
+NIACL,Insurance
+GICRE,Insurance
+STARHEALTH,Insurance
+NIVABUPA,Insurance
+GOCOLORS,Insurance
+MAXFIN,Insurance
+
+# === NBFC / Finance (kept under Financial Services, narrower bucket) =======
+BAJFINANCE,NBFC
+BAJAJFINSV,NBFC
+CHOLAFIN,NBFC
+SHRIRAMFIN,NBFC
+MUTHOOTFIN,NBFC
+MANAPPURAM,NBFC
+PFC,NBFC
+RECLTD,NBFC
+LICHSGFIN,NBFC
+PNBHOUSING,NBFC
+HOMEFIRST,NBFC
+APTUS,NBFC
+CREDITACC,NBFC
+FIVESTAR,NBFC
+SBFC,NBFC
+MASFIN,NBFC
+ARMANFIN,NBFC
+POONAWALLA,NBFC
+SUNDARMFIN,NBFC
+M&MFIN,NBFC
+EDELWEISS,NBFC
+CRISIL,NBFC
+CARERATING,NBFC
+ICRA,NBFC
+INDIAGLYCO,NBFC
+IRFC,NBFC
+
+# === Banks (split out from Financial Services explicitly) ==================
+HDFCBANK,Banks
+ICICIBANK,Banks
+SBIN,Banks
+KOTAKBANK,Banks
+AXISBANK,Banks
+INDUSINDBK,Banks
+BANKBARODA,Banks
+PNB,Banks
+CANBK,Banks
+UNIONBANK,Banks
+BANKINDIA,Banks
+IOB,Banks
+INDIANB,Banks
+CENTRALBK,Banks
+UCOBANK,Banks
+MAHABANK,Banks
+RBLBANK,Banks
+FEDERALBNK,Banks
+IDFCFIRSTB,Banks
+YESBANK,Banks
+AUBANK,Banks
+BANDHANBNK,Banks
+DCBBANK,Banks
+KARURVYSYA,Banks
+SOUTHBANK,Banks
+CUB,Banks
+TMB,Banks
+CSBBANK,Banks
+J&KBANK,Banks
+KARNATAKAB,Banks
+EQUITASBNK,Banks
+UJJIVANSFB,Banks
+ESAFSFB,Banks
+SURYODAY,Banks
+JANASFB,Banks
+
+# === Power: split per Screener.in/SEBI taxonomy =============================
+# Generation (thermal + renewable + hydro all live here per screener.in)
+NTPC,Power - Generation
+TATAPOWER,Power - Generation
+ADANIPOWER,Power - Generation
+JSWENERGY,Power - Generation
+TORNTPOWER,Power - Generation
+NLCINDIA,Power - Generation
+JPPOWER,Power - Generation
+RPOWER,Power - Generation
+RTNPOWER,Power - Generation
+NAVA,Power - Generation
+NHPC,Power - Generation
+SJVN,Power - Generation
+CESC,Power - Generation
+ADANIGREEN,Power - Generation
+NTPCGREEN,Power - Generation
+KPIGREEN,Power - Generation
+ACMESOLAR,Power - Generation
+SUZLON,Power - Generation
+INOXWIND,Power - Generation
+WAAREEENER,Power - Generation
+GMRP&UI,Power - Generation
+ORIENTGREEN,Power - Generation
+RATTANPOWER,Power - Generation
+INSOLATION,Power - Generation
+KPENERGY,Power - Generation
+WAASOLAR,Power - Generation
+GUJINDS,Power - Generation
+# Transmission (per screener.in: 4 companies only)
+POWERGRID,Power - Transmission
+IGRID,Power - Transmission
+POWERINDIA,Power - Transmission
+ANZEN,Power - Transmission
+# Distribution (per screener.in: ADANIENSOL is here, NOT in Transmission)
+ADANIENSOL,Power - Distribution
+AMPVOLTS,Power - Distribution
+# Trading
+PTC,Power - Trading
+# NB: KEC, KALPATPOWR removed — they're Construction/EPC, not Power per
+# screener.in. Let them fall back to default NSE Industry tag.
+
+# === IT split into Software / Services / Hardware =========================
+TCS,IT - Services
+INFY,IT - Services
+WIPRO,IT - Services
+HCLTECH,IT - Services
+TECHM,IT - Services
+LTIM,IT - Services
+LTTS,IT - Services
+COFORGE,IT - Services
+MPHASIS,IT - Services
+PERSISTENT,IT - Services
+KPIT,IT - Services
+TATAELXSI,IT - Services
+CYIENT,IT - Services
+INFIBEAM,IT - Software
+INTELLECT,IT - Software
+NEWGEN,IT - Software
+NIITLTD,IT - Software
+RSSOFTWARE,IT - Software
+HAPPSTMNDS,IT - Software
+SONATSOFTW,IT - Software
+INTLCONV,IT - Software
+SAKSOFT,IT - Software
+ECLERX,IT - Services
+ROUTE,IT - Services
+HCLTECH,IT - Services
+INFOBEAN,IT - Software
+ZENSARTECH,IT - Services
+DATAMATICS,IT - Services
+RAMRAJ,IT - Services
+HEXAWARE,IT - Services
+BIRLASOFT,IT - Services
+
+# === Capital Goods split (defence, engineering, electricals) ================
+HAL,Defence
+BEL,Defence
+BDL,Defence
+SOLARINDS,Defence
+MIDHANI,Defence
+BHEL,Defence
+ASTRAMICRO,Defence
+DCXINDIA,Defence
+PARAS,Defence
+ZEN,Defence
+DRONACHRYA,Defence
+APOLSINHOT,Defence
+KIRLOSBROS,Industrial Manufacturing
+KIRLOSENG,Industrial Manufacturing
+TIINDIA,Industrial Manufacturing
+SCHAEFFLER,Industrial Manufacturing
+SKFINDIA,Industrial Manufacturing
+SUNDRMFAST,Industrial Manufacturing
+GRINDWELL,Industrial Manufacturing
+TIMKEN,Industrial Manufacturing
+CARBORUNIV,Industrial Manufacturing
+GMMPFAUDLR,Industrial Manufacturing
+TRITURBINE,Industrial Manufacturing
+PRAJIND,Industrial Manufacturing
+ELGIEQUIP,Industrial Manufacturing
+LAXMIMACH,Industrial Manufacturing
+ION,Industrial Manufacturing
+# MACPOWER, JBMA, LUMAXTECH live below in their canonical sections.
+ABB,Electrical Equipment
+SIEMENS,Electrical Equipment
+HAVELLS,Electrical Equipment
+POLYCAB,Electrical Equipment
+KEI,Electrical Equipment
+FINCABLES,Electrical Equipment
+CGPOWER,Electrical Equipment
+RRKABEL,Electrical Equipment
+HBLPOWER,Electrical Equipment
+HEG,Electrical Equipment
+GRAPHITE,Electrical Equipment
+APARINDS,Electrical Equipment
+TRIVENI,Electrical Equipment
+
+# === Pharma split into Pharma / Biotech / Hospitals =========================
+SUNPHARMA,Pharmaceuticals
+DRREDDY,Pharmaceuticals
+CIPLA,Pharmaceuticals
+DIVISLAB,Pharmaceuticals
+LUPIN,Pharmaceuticals
+AUROPHARMA,Pharmaceuticals
+TORNTPHARM,Pharmaceuticals
+ZYDUSLIFE,Pharmaceuticals
+ALKEM,Pharmaceuticals
+MANKIND,Pharmaceuticals
+GLENMARK,Pharmaceuticals
+LAURUSLABS,Pharmaceuticals
+BIOCON,Biotechnology
+SYNGENE,Biotechnology
+GRANULES,Pharmaceuticals
+NATCOPHARM,Pharmaceuticals
+APOLLOHOSP,Healthcare Services
+MAXHEALTH,Healthcare Services
+FORTIS,Healthcare Services
+NH,Healthcare Services
+GLOBAL,Healthcare Services
+ASTERDM,Healthcare Services
+KIMS,Healthcare Services
+RAINBOW,Healthcare Services
+LALPATHLAB,Healthcare Services
+METROPOLIS,Healthcare Services
+THYROCARE,Healthcare Services
+KRSNAA,Healthcare Services
+SYRMA,Healthcare Equipment
+POLYMED,Healthcare Equipment
+SHAILY,Healthcare Equipment
+RUSHIL,Healthcare Equipment
+
+# === User's recurring untagged winners ======================================
+# These were found via journal forensics — symbols you actively trade that
+# are missing from NSE Total Market. Tagging them here unlocks sector
+# context in the composite scorer for your real positions.
+INFOBEAN,IT - Software
+STYLAMIND,Construction Materials
+EUROBOND,Building Products
+METSL,Metals & Mining
+SHREERAMA,Construction Materials
+RAJESH,Capital Markets
+BRPL,Building Products
+AEL,Holding Company
+ATHERENERG,Auto Components
+LUMAXTECH,Auto Components
+JBMA,Auto Components
+# MACPOWER = MAC Power Cool Systems = HVAC/cooling-systems manufacturer.
+# Despite the name "POWER", this is NOT a Power-sector company.
+# It belongs in Industrial Manufacturing.
+MACPOWER,Industrial Manufacturing
+
+# === Defence (additions beyond above) =======================================
+KSL,Defence
+GRSE,Defence
+COCHINSHIP,Defence
+GARDENS,Defence
+MAZDOCK,Defence

@@ -184,8 +184,13 @@ def _roc_rebased(series: list[float], window: int) -> list[float]:
 def compute_rotation(db: Session, *, lookback_days: int = LOOKBACK_DAYS) -> list[SectorPoint]:
     """End-to-end: build sector series → RS-Ratio → RS-Momentum → points.
 
-    Always returns a list (possibly empty if data is too sparse). Never
-    raises; logs and skips on any per-symbol issue.
+    Groups by COARSE-GRAINED parent sector, not fine-grained industry. So
+    "Power - Distribution" (2 stocks) rolls up to "Power" (30+ stocks)
+    instead of being dropped for too-few constituents.
+
+    The fine-grained tag is preserved for display — the symbol_quadrant_map
+    helper exposes both. Always returns a list (possibly empty if data is
+    too sparse). Never raises; logs and skips on any per-symbol issue.
     """
     from .scanner import index_universe as idx_uni
 
@@ -199,10 +204,56 @@ def compute_rotation(db: Session, *, lookback_days: int = LOOKBACK_DAYS) -> list
     if not ind_map:
         return []
 
-    sector_to_symbols: dict[str, list[str]] = defaultdict(list)
+    # Hierarchical grouping:
+    #   1. First try grouping at the FINE industry level (Capital Markets,
+    #      Power - Generation, etc.) — preserves rotation signal for splits.
+    #   2. Industries with <MIN_CONSTITUENTS_PER_SECTOR fall back to PARENT
+    #      ("Power - Distribution" with 2 stocks → "Power" with 30+).
+    #   3. The parent fallback bucket aggregates ALL the parent's stocks
+    #      (not just the orphaned ones), so the inherited quadrant reflects
+    #      the broad sector trend, not a small fragment of it.
+    industry_constituents: dict[str, list[str]] = defaultdict(list)
     for sym, industry in ind_map.items():
         if industry:
+            industry_constituents[industry].append(sym)
+
+    # Decide which industries are large enough for their own RRG point.
+    kept_industries = {
+        ind for ind, syms in industry_constituents.items()
+        if len(syms) >= MIN_CONSTITUENTS_PER_SECTOR
+    }
+
+    sector_to_symbols: dict[str, list[str]] = defaultdict(list)
+    for sym, industry in ind_map.items():
+        if not industry:
+            continue
+        if industry in kept_industries:
             sector_to_symbols[industry].append(sym)
+            continue
+        # Industry too small to RRG on its own — fall back to parent.
+        parent = idx_uni.industry_to_sector(industry)
+        # Parent bucket pools EVERY parent-sector symbol so the signal is
+        # broad. We rebuild parent membership from scratch here.
+        # (Done in second pass below — for now, mark with parent placeholder.)
+        sector_to_symbols[f"__parent__{parent}"].append(sym)
+
+    # Second pass: for each parent placeholder, replace with the FULL list
+    # of stocks under that parent (across all child industries, kept or not).
+    parent_to_all_syms: dict[str, list[str]] = defaultdict(list)
+    for sym, industry in ind_map.items():
+        if industry:
+            parent_to_all_syms[idx_uni.industry_to_sector(industry)].append(sym)
+
+    rebuilt: dict[str, list[str]] = {}
+    for key, syms in sector_to_symbols.items():
+        if key.startswith("__parent__"):
+            parent = key[len("__parent__"):]
+            # Use the full parent-sector pool. The orphaned stocks will
+            # inherit this parent's quadrant via symbol_quadrant_map.
+            rebuilt[parent] = parent_to_all_syms[parent]
+        else:
+            rebuilt[key] = syms
+    sector_to_symbols = rebuilt
 
     # Pull bars only for the symbols we care about — keeps memory reasonable.
     all_syms = [s for syms in sector_to_symbols.values() for s in syms]
@@ -303,8 +354,9 @@ def symbol_quadrant_map(db: Session) -> dict[str, str]:
     if _quadrant_cache is not None and _quadrant_cache.get("as_of") == anchor:
         return _quadrant_cache["map"]
 
-    # Recompute. compute_rotation already gives us per-sector quadrants;
-    # we then expand back via industry_map to symbol level.
+    # Recompute. compute_rotation groups at the parent-sector level, so
+    # we look up via industry_to_sector() to find each symbol's coarse
+    # bucket and read its quadrant from there.
     try:
         rotation = compute_rotation(db)
         ind_map = idx_uni.industry_map()
@@ -315,12 +367,18 @@ def symbol_quadrant_map(db: Session) -> dict[str, str]:
     sector_to_quadrant = {p.name: p.quadrant for p in rotation}
     out: dict[str, str] = {}
     for sym, industry in ind_map.items():
+        # Hierarchical lookup: try the fine industry first (e.g.
+        # "Capital Markets"). If not classified — usually because it had
+        # <MIN_CONSTITUENTS — fall back to the parent ("Financial Services").
         q = sector_to_quadrant.get(industry)
+        if not q:
+            parent = idx_uni.industry_to_sector(industry)
+            q = sector_to_quadrant.get(parent)
         if q:
             out[sym] = q
 
     _quadrant_cache = {"as_of": anchor, "map": out}
-    log.info("symbol_quadrant_map: %d tagged symbols across %d sectors",
+    log.info("symbol_quadrant_map: %d tagged symbols across %d sector buckets",
              len(out), len(sector_to_quadrant))
     return out
 
