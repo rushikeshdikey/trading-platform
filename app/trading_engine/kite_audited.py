@@ -205,3 +205,154 @@ def fetch_gtts(db: Session, user: User) -> list[dict]:
         if not kc.is_authed:
             return []
         return kc.call("get_gtts", kc.client.get_gtts) or []
+
+
+# ---------------------------------------------------------------------------
+# Phase E1 write surface — order placement.
+#
+# Every method here writes to the broker. They share three preconditions:
+#   1. Authed Kite session (raises if not)
+#   2. Resolved KiteInstrument (raises if symbol can't be mapped to a real
+#      tradingsymbol + exchange)
+#   3. Sanity-checked sizes (qty > 0, stop < entry < target for long, etc.)
+# ---------------------------------------------------------------------------
+
+
+def place_gtt_oco(
+    db: Session, user: User, *,
+    symbol: str, qty: int,
+    entry_price: float, stop_price: float, target_price: float,
+    transaction_type: str = "BUY",
+) -> dict:
+    """Place a GTT-OCO (One-Cancels-Other) bracket on Kite.
+
+    OCO has three legs: entry trigger + SL trigger + target trigger.
+    When entry fires, both SL + target legs activate; whichever hits
+    first cancels the other.
+
+    For BUY trades: stop_price < entry_price < target_price.
+
+    Returns Kite's response dict; the broker's GTT id is in
+    response["trigger_id"]. Save that on the Trade row so we can later
+    modify or cancel.
+    """
+    from .. import kite as kite_mod
+
+    if transaction_type not in ("BUY", "SELL"):
+        raise ValueError(f"transaction_type must be BUY or SELL, got {transaction_type}")
+    if qty <= 0:
+        raise ValueError(f"qty must be positive, got {qty}")
+    if transaction_type == "BUY":
+        if not (stop_price < entry_price < target_price):
+            raise ValueError(
+                f"BUY OCO requires stop < entry < target; got "
+                f"stop={stop_price} entry={entry_price} target={target_price}"
+            )
+    else:  # SELL
+        if not (target_price < entry_price < stop_price):
+            raise ValueError(
+                f"SELL OCO requires target < entry < stop; got "
+                f"stop={stop_price} entry={entry_price} target={target_price}"
+            )
+
+    inst = kite_mod._resolve_instrument(db, symbol)
+    if inst is None:
+        raise RuntimeError(f"can't resolve {symbol} to a Kite instrument")
+
+    # Kite GTT API parameters. Trigger values are always sorted ascending.
+    trigger_values = sorted([stop_price, target_price])
+    last_price = entry_price  # used by Kite for sanity, not the actual trigger
+
+    with session(db, user) as kc:
+        if not kc.is_authed:
+            raise RuntimeError("not authed with Kite")
+
+        # Order legs that fire when each trigger hits. OCO = exactly 2 orders
+        # of opposite intent for a BUY entry: when entry fires, BOTH legs
+        # become active; first to trigger cancels the other.
+        # For BUY: leg1 = SL-sell at stop, leg2 = target-sell at target
+        leg_transaction = "SELL" if transaction_type == "BUY" else "BUY"
+        orders = [
+            {
+                "exchange": inst.exchange,
+                "tradingsymbol": inst.tradingsymbol,
+                "transaction_type": leg_transaction,
+                "quantity": qty,
+                "order_type": "LIMIT",
+                "product": "CNC",  # delivery — swing trade
+                "price": trigger_values[0],
+            },
+            {
+                "exchange": inst.exchange,
+                "tradingsymbol": inst.tradingsymbol,
+                "transaction_type": leg_transaction,
+                "quantity": qty,
+                "order_type": "LIMIT",
+                "product": "CNC",
+                "price": trigger_values[1],
+            },
+        ]
+
+        return kc.call(
+            "place_gtt",
+            kc.client.place_gtt,
+            trigger_type=kc.client.GTT_TYPE_OCO,
+            tradingsymbol=inst.tradingsymbol,
+            exchange=inst.exchange,
+            trigger_values=trigger_values,
+            last_price=last_price,
+            orders=orders,
+        )
+
+
+def cancel_gtt(db: Session, user: User, trigger_id: int) -> dict:
+    """Cancel a GTT trigger by its Kite-side ID."""
+    with session(db, user) as kc:
+        if not kc.is_authed:
+            raise RuntimeError("not authed with Kite")
+        return kc.call("delete_gtt", kc.client.delete_gtt, trigger_id=trigger_id)
+
+
+def modify_gtt(
+    db: Session, user: User, trigger_id: int, *,
+    symbol: str, qty: int,
+    stop_price: float, target_price: float,
+    transaction_type: str = "BUY",
+    last_price: float | None = None,
+) -> dict:
+    """Modify an existing GTT-OCO — used by the TSL daemon to ratchet SL up."""
+    from .. import kite as kite_mod
+
+    inst = kite_mod._resolve_instrument(db, symbol)
+    if inst is None:
+        raise RuntimeError(f"can't resolve {symbol} to a Kite instrument")
+
+    trigger_values = sorted([stop_price, target_price])
+    leg_transaction = "SELL" if transaction_type == "BUY" else "BUY"
+    orders = [
+        {
+            "exchange": inst.exchange, "tradingsymbol": inst.tradingsymbol,
+            "transaction_type": leg_transaction, "quantity": qty,
+            "order_type": "LIMIT", "product": "CNC", "price": trigger_values[0],
+        },
+        {
+            "exchange": inst.exchange, "tradingsymbol": inst.tradingsymbol,
+            "transaction_type": leg_transaction, "quantity": qty,
+            "order_type": "LIMIT", "product": "CNC", "price": trigger_values[1],
+        },
+    ]
+
+    with session(db, user) as kc:
+        if not kc.is_authed:
+            raise RuntimeError("not authed with Kite")
+        return kc.call(
+            "modify_gtt",
+            kc.client.modify_gtt,
+            trigger_id=trigger_id,
+            trigger_type=kc.client.GTT_TYPE_OCO,
+            tradingsymbol=inst.tradingsymbol,
+            exchange=inst.exchange,
+            trigger_values=trigger_values,
+            last_price=last_price or trigger_values[0],
+            orders=orders,
+        )

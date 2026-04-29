@@ -11,6 +11,7 @@ data/*.csv
 # Exception: industry_overrides.csv is hand-curated code, not cached data.
 !data/industry_overrides.csv
 !data/bse_only_symbols.csv
+!data/symbol_aliases.csv
 .DS_Store
 .env
 .idea/

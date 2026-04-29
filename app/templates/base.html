@@ -260,6 +260,9 @@
             <a href="/cockpit" class="{{ _link_class }} {% if path.startswith('/cockpit') or path == '/' %}{{ _active_class }}{% endif %}">
               <i data-lucide="gauge" class="w-5 h-5"></i>Cockpit
             </a>
+            <a href="/positions" class="{{ _link_class }} {% if path.startswith('/positions') %}{{ _active_class }}{% endif %}">
+              <i data-lucide="briefcase" class="w-5 h-5"></i>Positions
+            </a>
             <a href="/dashboard" class="{{ _link_class }} {% if path.startswith('/dashboard') %}{{ _active_class }}{% endif %}">
               <i data-lucide="layout-dashboard" class="w-5 h-5"></i>Dashboard
             </a>
@@ -331,6 +334,9 @@
 
       <a href="/cockpit" class="nav-link hidden md:inline-flex {% if path.startswith('/cockpit') or path == '/' %}active{% endif %}">
         <i data-lucide="gauge"></i>Cockpit
+      </a>
+      <a href="/positions" class="nav-link hidden md:inline-flex {% if path.startswith('/positions') %}active{% endif %}">
+        <i data-lucide="briefcase"></i>Positions
       </a>
       <a href="/dashboard" class="nav-link hidden md:inline-flex {% if path.startswith('/dashboard') %}active{% endif %}">
         <i data-lucide="layout-dashboard"></i>Dashboard
@@ -546,6 +552,7 @@
       const ITEMS = [
         // Pages
         { label: 'Cockpit',           hint: 'Daily decision support',           url: '/cockpit',        icon: 'layout-dashboard', section: 'Page' },
+        { label: 'Positions',         hint: 'Open positions card grid',          url: '/positions',      icon: 'briefcase',        section: 'Page' },
         { label: 'Dashboard',         hint: 'Year P/L, equity curve',           url: '/dashboard',      icon: 'line-chart',       section: 'Page' },
         { label: 'Trades — open',     hint: 'Open positions',                   url: '/trades?status=open',  icon: 'list',        section: 'Page' },
         { label: 'Trades — closed',   hint: 'Closed positions',                 url: '/trades?status=closed', icon: 'archive',    section: 'Page' },

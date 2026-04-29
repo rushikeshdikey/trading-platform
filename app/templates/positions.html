@@ -1,0 +1,359 @@
+{% extends "base.html" %}
+{% block title %}Positions · Trading Journal{% endblock %}
+{% block content %}
+{% set s = summary %}
+<div class="max-w-7xl mx-auto space-y-5" x-data="positionsPage()" x-init="initCharts()">
+
+  <!-- Header -->
+  <div class="flex items-start justify-between flex-wrap gap-3">
+    <div>
+      <div class="text-[11px] font-bold uppercase tracking-widest text-zinc-500">Position Manager</div>
+      <h1 class="text-2xl font-semibold tracking-tight">Open positions</h1>
+      <p class="text-zinc-500 text-sm mt-1 max-w-3xl">
+        What's on your desk right now. Color-coded border by P&amp;L, mini OHLC per card, action verdict from your own exit rules.
+      </p>
+    </div>
+    <div class="flex items-center gap-2">
+      <a href="/trades/new" class="btn btn-outline text-xs">
+        <i data-lucide="plus"></i>Add trade
+      </a>
+      <a href="/cockpit" class="btn btn-outline text-xs">
+        <i data-lucide="layout-dashboard"></i>Cockpit
+      </a>
+      <a href="/prices/refresh" class="btn btn-primary text-xs"
+         hx-post="/prices/refresh" hx-swap="none"
+         onclick="setTimeout(() => window.location.reload(), 1500)">
+        <i data-lucide="refresh-cw"></i>Refresh All
+      </a>
+    </div>
+  </div>
+
+  <!-- Top stats strip -->
+  <div class="grid grid-cols-2 md:grid-cols-5 gap-2">
+    <div class="card px-4 py-3">
+      <div class="text-[10px] uppercase tracking-wide text-zinc-500">% invested</div>
+      <div class="text-2xl font-bold tabular-nums {% if pct_invested > 0.8 %}text-rose-700{% elif pct_invested > 0.5 %}text-amber-700{% else %}text-sky-700{% endif %}">{{ '%.1f'|format(pct_invested * 100) }}%</div>
+      <div class="text-[11px] text-zinc-500">₹{{ '{:,.0f}'.format(s.invested_rs) }} of ₹{{ '{:,.0f}'.format(s.capital) }}</div>
+    </div>
+    <div class="card px-4 py-3 {% if (s.day_pnl_rs or 0) > 0 %}border-emerald-200 bg-gradient-to-br from-emerald-50/40 to-transparent{% elif (s.day_pnl_rs or 0) < 0 %}border-rose-200 bg-gradient-to-br from-rose-50/40 to-transparent{% endif %}">
+      <div class="text-[10px] uppercase tracking-wide text-zinc-500">Day's P&amp;L</div>
+      <div class="text-2xl font-bold tabular-nums {% if (s.day_pnl_rs or 0) > 0 %}text-emerald-700{% elif (s.day_pnl_rs or 0) < 0 %}text-rose-700{% else %}text-zinc-700{% endif %}">
+        {% if s.day_pnl_rs is none %}—
+        {% else %}{{ '%+.0f'|format(s.day_pnl_rs / 1000) }}K{% endif %}
+      </div>
+      <div class="text-[11px] text-zinc-500">{{ '%+.2f%%'|format((s.day_pnl_pct or 0) * 100) if s.day_pnl_pct is not none else '' }}</div>
+    </div>
+    <div class="card px-4 py-3">
+      <div class="text-[10px] uppercase tracking-wide text-zinc-500">Total P&amp;L (open)</div>
+      <div class="text-2xl font-bold tabular-nums {% if s.total_pnl_rs > 0 %}text-emerald-700{% elif s.total_pnl_rs < 0 %}text-rose-700{% else %}text-zinc-700{% endif %}">
+        {{ '%+.0f'|format(s.total_pnl_rs / 1000) }}K
+      </div>
+      <div class="text-[11px] text-zinc-500">{{ '%+.2f%%'|format((s.total_pnl_pct or 0) * 100) if s.total_pnl_pct is not none else '' }} vs invested</div>
+    </div>
+    <div class="card px-4 py-3">
+      <div class="text-[10px] uppercase tracking-wide text-zinc-500">Open risk</div>
+      <div class="text-2xl font-bold tabular-nums text-rose-700">
+        {{ '%.1f%%'|format((s.open_risk_pct_of_capital or 0) * 100) }}
+      </div>
+      <div class="text-[11px] text-zinc-500">₹{{ '{:,.0f}'.format(s.open_risk_rs) }} at risk</div>
+    </div>
+    <div class="card px-4 py-3">
+      <div class="text-[10px] uppercase tracking-wide text-zinc-500">Locked profit</div>
+      <div class="text-2xl font-bold tabular-nums text-emerald-700">
+        ₹{{ '{:,.0f}'.format(s.locked_profit_rs) }}
+      </div>
+      <div class="text-[11px] text-zinc-500">if all SLs hit</div>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="flex items-center gap-2">
+    <a href="?tab=active" class="pill border text-sm font-semibold {% if tab == 'active' %}bg-zinc-900 text-white border-zinc-900{% else %}bg-white text-zinc-700 border-zinc-300 hover:bg-zinc-50{% endif %}">
+      Active <span class="ml-1 opacity-70">{{ s.positions }}</span>
+    </a>
+    <a href="?tab=closed" class="pill border text-sm font-semibold {% if tab == 'closed' %}bg-zinc-900 text-white border-zinc-900{% else %}bg-white text-zinc-700 border-zinc-300 hover:bg-zinc-50{% endif %}">
+      Closed <span class="ml-1 opacity-70">{{ closed_stats.count or '' }}</span>
+    </a>
+    <a href="?tab=all" class="pill border text-sm font-semibold {% if tab == 'all' %}bg-zinc-900 text-white border-zinc-900{% else %}bg-white text-zinc-700 border-zinc-300 hover:bg-zinc-50{% endif %}">
+      All
+    </a>
+  </div>
+
+  <!-- Active card grid -->
+  {% if tab in ('active', 'all') %}
+    {% if not s.cards %}
+      <div class="card p-8 text-center text-zinc-500 text-sm">
+        No active positions. <a href="/trades/new" class="link">Add a trade</a> to get started.
+      </div>
+    {% else %}
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+        {% for c in s.cards %}
+        {% set v = verdicts[c.trade_id] %}
+        {% set border_class =
+              ('border-emerald-300' if (c.r_multiple or 0) >= 1
+              else 'border-amber-300' if (c.r_multiple or 0) >= 0
+              else 'border-rose-300') %}
+        <div class="card p-4 border-2 {{ border_class }}">
+          <!-- Card header: symbol + day move + R-multiple -->
+          <div class="flex items-start justify-between gap-2 mb-2">
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-2 flex-wrap">
+                <a href="/trades/{{ c.trade_id }}" class="font-bold text-base truncate hover:underline">{{ c.instrument }}</a>
+                <a href="{{ c.instrument | tv_url }}" target="_blank" rel="noopener"
+                   class="text-zinc-400 hover:text-zinc-700" title="Chart on TradingView">
+                  <i data-lucide="line-chart" class="w-3.5 h-3.5"></i>
+                </a>
+                {% if c.side == 'S' %}<span class="pill text-[10px] bg-rose-50 text-rose-700 border-rose-200">Short</span>{% endif %}
+              </div>
+              <div class="text-[11px] text-zinc-500 mt-0.5">
+                Position size: <strong>{{ '%.1f%%'|format(c.allocation_pct * 100) }}</strong> ·
+                ₹{{ '{:,.1f}K'.format(c.invested_rs / 1000) }} ·
+                Holding {{ c.holding_days }}d
+              </div>
+            </div>
+            <div class="text-right shrink-0">
+              {% if c.move_pct is not none %}
+              <div class="text-lg font-bold tabular-nums {% if c.move_pct > 0 %}text-emerald-700{% elif c.move_pct < 0 %}text-rose-700{% else %}text-zinc-700{% endif %}">
+                {{ '%+.1f%%'|format(c.move_pct * 100) }}
+              </div>
+              {% endif %}
+              {% if c.r_multiple is not none %}
+              <div class="text-xs tabular-nums {% if c.r_multiple > 0 %}text-emerald-600{% elif c.r_multiple < 0 %}text-rose-600{% else %}text-zinc-500{% endif %}">
+                {{ '%+.2fR'|format(c.r_multiple) }}
+              </div>
+              {% endif %}
+            </div>
+          </div>
+
+          <!-- Action pill -->
+          <div class="flex items-center gap-2 mb-2 text-xs">
+            <span class="pill border {{ v.color_class }} font-semibold">{{ v.action }}</span>
+            <span class="text-zinc-500 text-[11px] truncate flex-1">{{ v.reason }}</span>
+          </div>
+
+          <!-- Mini OHLC chart -->
+          <div class="relative h-32 my-2">
+            <canvas data-symbol="{{ c.instrument }}"
+                    data-entry="{{ c.avg_entry }}"
+                    data-stop="{{ c.effective_stop }}"
+                    data-cmp="{{ c.cmp or '' }}"
+                    class="w-full h-full"></canvas>
+          </div>
+
+          <!-- Footer: entry / avg / cmp / stop -->
+          <div class="grid grid-cols-4 gap-1 text-[11px] tabular-nums border-t border-zinc-100 pt-2">
+            <div>
+              <div class="text-zinc-400 text-[9px] uppercase">Entry</div>
+              <div class="font-semibold">₹{{ '{:,.1f}'.format(c.avg_entry) }}</div>
+            </div>
+            <div>
+              <div class="text-zinc-400 text-[9px] uppercase">SL</div>
+              <div class="font-semibold text-rose-700">₹{{ '{:,.1f}'.format(c.effective_stop) }}</div>
+            </div>
+            <div>
+              <div class="text-zinc-400 text-[9px] uppercase">CMP</div>
+              <div class="font-semibold {% if c.cmp and c.cmp > c.avg_entry %}text-emerald-700{% elif c.cmp and c.cmp < c.avg_entry %}text-rose-700{% else %}text-zinc-700{% endif %}">
+                {% if c.cmp %}₹{{ '{:,.1f}'.format(c.cmp) }}{% else %}—{% endif %}
+              </div>
+            </div>
+            <div>
+              <div class="text-zinc-400 text-[9px] uppercase">Risk ₹</div>
+              <div class="font-semibold">₹{{ '{:,.0f}'.format(c.risk_rs) }}</div>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% endif %}
+
+  <!-- Closed card grid -->
+  {% if tab in ('closed', 'all') %}
+    <div class="flex items-center justify-between mt-6 mb-2">
+      <h2 class="text-lg font-semibold tracking-tight">Recently closed</h2>
+      <div class="text-xs text-zinc-500">
+        {{ closed_stats.count }} trades · realised
+        <strong class="{% if closed_stats.realized_total > 0 %}text-emerald-700{% else %}text-rose-700{% endif %}">
+          ₹{{ '{:+,.0f}'.format(closed_stats.realized_total) }}
+        </strong>
+        {% if closed_stats.winrate is not none %}
+          · win-rate <strong>{{ '%.0f%%'|format(closed_stats.winrate * 100) }}</strong>
+          ({{ closed_stats.wins }}W / {{ closed_stats.losses }}L)
+        {% endif %}
+      </div>
+    </div>
+    {% if not closed_cards %}
+      <div class="card p-6 text-center text-zinc-500 text-sm">No closed trades in the last 90 days.</div>
+    {% else %}
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+        {% for c in closed_cards %}
+        {% set border_class =
+            'border-emerald-200' if c.pnl_rs > 0
+            else 'border-rose-200' if c.pnl_rs < 0
+            else 'border-zinc-200' %}
+        <div class="card p-4 border-2 {{ border_class }} opacity-90">
+          <div class="flex items-start justify-between gap-2 mb-2">
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-2 flex-wrap">
+                <a href="/trades/{{ c.trade_id }}" class="font-bold text-base truncate hover:underline">{{ c.instrument }}</a>
+                <a href="{{ c.instrument | tv_url }}" target="_blank" rel="noopener"
+                   class="text-zinc-400 hover:text-zinc-700" title="Chart">
+                  <i data-lucide="line-chart" class="w-3.5 h-3.5"></i>
+                </a>
+                <span class="pill text-[10px] bg-zinc-100 text-zinc-700 border-zinc-200">Closed</span>
+              </div>
+              <div class="text-[11px] text-zinc-500 mt-0.5">
+                {{ c.setup }} · {{ c.holding_days }}d · {{ c.entry_date.isoformat() }} → {{ c.close_date.isoformat() }}
+              </div>
+            </div>
+            <div class="text-right shrink-0">
+              {% if c.pnl_pct is not none %}
+              <div class="text-lg font-bold tabular-nums {% if c.pnl_rs > 0 %}text-emerald-700{% elif c.pnl_rs < 0 %}text-rose-700{% else %}text-zinc-700{% endif %}">
+                {{ '%+.1f%%'|format(c.pnl_pct * 100) }}
+              </div>
+              {% endif %}
+              {% if c.r_multiple is not none %}
+              <div class="text-xs tabular-nums {% if c.r_multiple > 0 %}text-emerald-600{% elif c.r_multiple < 0 %}text-rose-600{% endif %}">
+                {{ '%+.2fR'|format(c.r_multiple) }}
+              </div>
+              {% endif %}
+            </div>
+          </div>
+          <div class="relative h-28 my-2">
+            <canvas data-symbol="{{ c.instrument }}"
+                    data-entry="{{ c.avg_entry }}"
+                    data-exit="{{ c.avg_exit or '' }}"
+                    data-closed="1"
+                    class="w-full h-full"></canvas>
+          </div>
+          <div class="grid grid-cols-3 gap-1 text-[11px] tabular-nums border-t border-zinc-100 pt-2">
+            <div>
+              <div class="text-zinc-400 text-[9px] uppercase">Entry</div>
+              <div class="font-semibold">₹{{ '{:,.1f}'.format(c.avg_entry) }}</div>
+            </div>
+            <div>
+              <div class="text-zinc-400 text-[9px] uppercase">Exit</div>
+              <div class="font-semibold">{% if c.avg_exit %}₹{{ '{:,.1f}'.format(c.avg_exit) }}{% else %}—{% endif %}</div>
+            </div>
+            <div>
+              <div class="text-zinc-400 text-[9px] uppercase">P&amp;L</div>
+              <div class="font-semibold {% if c.pnl_rs > 0 %}text-emerald-700{% elif c.pnl_rs < 0 %}text-rose-700{% endif %}">
+                ₹{{ '{:+,.0f}'.format(c.pnl_rs) }}
+              </div>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% endif %}
+
+</div>
+
+<script>
+  // Two JSON blobs: active (open positions) and closed. Indexed by symbol.
+  // Each value is an array of {t, o, h, l, c} candles, ascending date order.
+  window._activeChartData = {{ active_chart_json | safe }};
+  window._closedChartData = {{ closed_chart_json | safe }};
+
+  function positionsPage() {
+    return {
+      initCharts() {
+        // Wait for Chart.js financial plugin to be ready, then walk every
+        // canvas element with data-symbol and render a candlestick chart.
+        this.$nextTick(() => this._render());
+      },
+      _render() {
+        if (typeof Chart === 'undefined') {
+          console.warn('Chart.js not loaded'); return;
+        }
+        const canvases = document.querySelectorAll('canvas[data-symbol]');
+        canvases.forEach(canvas => {
+          const sym = canvas.dataset.symbol;
+          const isClosed = canvas.dataset.closed === '1';
+          const data = (isClosed ? window._closedChartData : window._activeChartData)[sym] || [];
+          if (data.length === 0) {
+            canvas.style.display = 'none';
+            return;
+          }
+          const entry = parseFloat(canvas.dataset.entry) || null;
+          const stop = parseFloat(canvas.dataset.stop) || null;
+          const cmp = parseFloat(canvas.dataset.cmp) || null;
+          const exit = parseFloat(canvas.dataset.exit) || null;
+
+          const annotations = [];
+          if (entry) annotations.push({y: entry, color: '#3b82f6', label: 'E'});
+          if (stop) annotations.push({y: stop, color: '#ef4444', label: 'SL'});
+          if (cmp) annotations.push({y: cmp, color: '#10b981', label: 'CMP'});
+          if (exit) annotations.push({y: exit, color: '#71717a', label: 'X'});
+
+          new Chart(canvas, {
+            type: 'candlestick',
+            data: {
+              datasets: [{
+                label: sym,
+                data: data.map(d => ({x: d.t, o: d.o, h: d.h, l: d.l, c: d.c})),
+                borderColor: ctx => {
+                  const d = ctx.parsed; return (d && d.c >= d.o) ? '#10b981' : '#ef4444';
+                },
+                backgroundColor: ctx => {
+                  const d = ctx.parsed; return (d && d.c >= d.o) ? '#10b981' : '#ef4444';
+                },
+                borderWidth: 1,
+              }]
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              animation: false,
+              plugins: {
+                legend: { display: false },
+                tooltip: { enabled: true, mode: 'index', intersect: false },
+              },
+              scales: {
+                x: {
+                  type: 'time',
+                  time: { unit: 'week', displayFormats: { week: 'MMM d' } },
+                  ticks: { font: { size: 9 }, maxRotation: 0, autoSkipPadding: 20 },
+                  grid: { display: false },
+                },
+                y: {
+                  position: 'right',
+                  ticks: { font: { size: 9 }, maxTicksLimit: 4 },
+                  grid: { color: 'rgba(0,0,0,0.04)' },
+                  afterBuildTicks: (axis) => {
+                    // Inject annotation y-values so they're visible on the axis.
+                    const seen = new Set(axis.ticks.map(t => t.value));
+                    annotations.forEach(a => {
+                      if (a.y && !seen.has(a.y)) axis.ticks.push({value: a.y, label: ''});
+                    });
+                  },
+                }
+              },
+            },
+            plugins: [{
+              id: 'hlines',
+              afterDraw: (chart) => {
+                const ctx = chart.ctx; const yScale = chart.scales.y;
+                const xLeft = chart.chartArea.left, xRight = chart.chartArea.right;
+                annotations.forEach(a => {
+                  if (!a.y) return;
+                  const y = yScale.getPixelForValue(a.y);
+                  ctx.save();
+                  ctx.strokeStyle = a.color; ctx.lineWidth = 1; ctx.setLineDash([4, 3]);
+                  ctx.beginPath(); ctx.moveTo(xLeft, y); ctx.lineTo(xRight, y); ctx.stroke();
+                  // small label
+                  ctx.fillStyle = a.color; ctx.font = 'bold 9px sans-serif';
+                  ctx.setLineDash([]);
+                  ctx.fillText(a.label, xLeft + 2, y - 2);
+                  ctx.restore();
+                });
+              }
+            }]
+          });
+        });
+      }
+    }
+  }
+</script>
+{% endblock %}

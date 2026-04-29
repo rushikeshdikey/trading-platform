@@ -1,0 +1,18 @@
+journal_symbol,broker_symbol
+# ============================================================================
+# Symbol aliases — journal-symbol → broker-symbol mappings.
+#
+# Use when the same stock is recorded under one ticker in our journal but a
+# different ticker at the broker (Kite, Definedge, etc.). Common cases:
+#  - SME-segment listing: NSE main board says SSEGL, BSE-SME says SSEGL-SM
+#  - Post-merger renames: TVS Motor was TVSMOTOR, Reliance was RELIANCE-EQ etc.
+#  - Multi-exchange: same scrip, different listings.
+#
+# Format: one row per alias. Reconciliation treats both names as the same
+# instrument when comparing journal Trade rows to broker holdings/positions.
+#
+# Add an entry here when /trading/kite reconciliation flags a "missing in
+# broker" name that you know is held under a slightly different ticker.
+# ============================================================================
+
+SSEGL,SSEGL-SM

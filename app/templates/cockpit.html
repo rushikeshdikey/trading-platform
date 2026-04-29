@@ -6,6 +6,33 @@
 {% set ap = state.auto_pilot %}
 <div class="max-w-7xl mx-auto space-y-6">
 
+  {# Phase E1 GTT submit result banner — shown after redirect from
+     /trading/gtt/submit. Success = trigger_id link to /trading/kite,
+     failure = exception class + message. #}
+  {% if request.query_params.get('gtt_ok') %}
+  <div class="p-3 rounded-lg bg-emerald-50 border border-emerald-300 text-emerald-900 text-sm flex items-center gap-2">
+    <i data-lucide="check-circle" class="w-4 h-4"></i>
+    <strong>GTT submitted to Kite:</strong>
+    {{ request.query_params.get('symbol') }} · trigger_id <span class="font-mono">{{ request.query_params.get('trigger_id') }}</span>
+    <a href="/trading/kite" class="ml-auto link">View at /trading/kite →</a>
+  </div>
+  {% elif request.query_params.get('gtt_err') %}
+  <div class="p-3 rounded-lg bg-rose-50 border border-rose-300 text-rose-900 text-sm">
+    <div class="flex items-center gap-2">
+      <i data-lucide="alert-triangle" class="w-4 h-4"></i>
+      <strong>GTT not submitted:</strong>
+      <span class="font-mono">{{ request.query_params.get('gtt_err') }}</span>
+    </div>
+    {% if request.query_params.get('cap') %}
+      <div class="text-xs mt-1">
+        Daily cap {{ request.query_params.get('cap') }} ·
+        already placed {{ request.query_params.get('already') }} ·
+        this would add {{ request.query_params.get('proposed') }}.
+      </div>
+    {% endif %}
+  </div>
+  {% endif %}
+
   {# ============================================================
      AUTO-PILOT — today's prescriptive picks. The headline panel.
      "Trade less, trade solid." Either the system tells you what
@@ -85,8 +112,28 @@
            title="Open chart on TradingView">
           <i data-lucide="line-chart"></i>
         </a>
+
+        {# Phase E1: one-click GTT-OCO submit. Wraps a confirm modal so the
+           user always sees the exact entry/SL/target/qty before posting.
+           Server-side daily-cap (2.5% portfolio risk) is enforced regardless. #}
+        <form method="post" action="/trading/gtt/submit" class="inline"
+              onsubmit="return confirm('Submit GTT-OCO to Kite?\n\n{{ p.symbol }}  ·  qty {{ p.qty }}\nEntry ₹{{ p.entry }}\nSL ₹{{ p.sl }} ({{ p.sl_pct }}%)\nTarget ₹{{ p.target }}\nRisk ₹{{ '{:,.0f}'.format(p.risk_rs) }}\n\nThis places the order at Kite. Cannot be undone via this page (cancel via /trading/kite).');">
+          <input type="hidden" name="symbol" value="{{ p.symbol }}">
+          <input type="hidden" name="qty" value="{{ p.qty }}">
+          <input type="hidden" name="entry_price" value="{{ p.entry }}">
+          <input type="hidden" name="stop_price" value="{{ p.sl }}">
+          <input type="hidden" name="target_price" value="{{ p.target }}">
+          <input type="hidden" name="transaction_type" value="BUY">
+          <input type="hidden" name="auto_pilot_rank" value="{{ p.rank }}">
+          <button class="btn !py-2 !px-3 text-xs whitespace-nowrap bg-amber-100 text-amber-900 border border-amber-300 hover:bg-amber-200"
+                  title="Place GTT-OCO bracket on Kite (entry + SL + target)">
+            <i data-lucide="zap"></i>Submit GTT
+          </button>
+        </form>
+
         <a href="/trades/new?instrument={{ p.symbol }}&entry_price={{ p.entry }}&sl={{ p.sl }}&qty={{ p.qty }}&setup=Auto-Pilot+A%2B"
-           class="btn btn-primary !py-2 !px-3 text-xs whitespace-nowrap">
+           class="btn btn-primary !py-2 !px-3 text-xs whitespace-nowrap"
+           title="Record manually-placed trade in journal">
           <i data-lucide="file-plus"></i>Plan trade
         </a>
       </div>
