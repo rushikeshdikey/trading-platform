@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}{{ point.name }} · Sector · Trading Journal{% endblock %}
+{% block content %}
+{% set p = point %}
+<div class="max-w-7xl mx-auto space-y-6">
+
+  <!-- Breadcrumb + headline -->
+  <div>
+    <div class="text-xs text-zinc-500 mb-1">
+      <a href="/sectors" class="link">← All sectors</a>
+    </div>
+    <div class="flex items-baseline gap-3 flex-wrap">
+      <h1 class="text-2xl font-semibold tracking-tight">{{ p.name }}</h1>
+      {% if p.quadrant == 'Leading' %}
+        <span class="pill text-xs font-bold bg-emerald-100 text-emerald-800 border-emerald-300">{{ p.quadrant }}</span>
+      {% elif p.quadrant == 'Improving' %}
+        <span class="pill text-xs font-bold bg-sky-50 text-sky-800 border-sky-200">{{ p.quadrant }}</span>
+      {% elif p.quadrant == 'Weakening' %}
+        <span class="pill text-xs font-bold bg-amber-50 text-amber-800 border-amber-200">{{ p.quadrant }}</span>
+      {% else %}
+        <span class="pill text-xs font-bold bg-rose-50 text-rose-800 border-rose-200">{{ p.quadrant }}</span>
+      {% endif %}
+      <span class="text-sm text-zinc-500">{{ p.constituents }} constituents</span>
+    </div>
+  </div>
+
+  <!-- Stat grid -->
+  <div class="grid grid-cols-2 md:grid-cols-6 gap-2">
+    {% macro stat(label, value, color='zinc') -%}
+    <div class="card px-3 py-2.5">
+      <div class="text-[10px] uppercase tracking-wide text-zinc-500">{{ label }}</div>
+      <div class="text-lg font-bold tabular-nums {% if color == 'emerald' %}text-emerald-700{% elif color == 'rose' %}text-rose-700{% else %}text-zinc-900{% endif %}">{{ value }}</div>
+    </div>
+    {%- endmacro %}
+    {{ stat('RS-Ratio', '%.1f'|format(p.rs_ratio), 'emerald' if p.rs_ratio >= 100 else 'rose') }}
+    {{ stat('RS-Momentum', '%.1f'|format(p.rs_momentum), 'emerald' if p.rs_momentum >= 100 else 'rose') }}
+    {{ stat('1-day', '%+.2f%%'|format(p.return_1d_pct), 'emerald' if p.return_1d_pct > 0 else 'rose') }}
+    {{ stat('1-week', '%+.2f%%'|format(p.return_1w_pct), 'emerald' if p.return_1w_pct > 0 else 'rose') }}
+    {{ stat('1-month', '%+.2f%%'|format(p.return_1m_pct), 'emerald' if p.return_1m_pct > 0 else 'rose') }}
+    {{ stat('3-month', '%+.2f%%'|format(p.return_3m_pct), 'emerald' if p.return_3m_pct > 0 else 'rose') }}
+  </div>
+
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+    {{ stat('% above 50-DMA', '%.0f%%'|format(p.pct_above_50dma)) }}
+    {{ stat('Scanner hits', p.scanner_hits) }}
+    {{ stat('vs Market (RRG window)', '%+.2f%%'|format(p.relative_return_pct)) }}
+  </div>
+
+  <!-- Currently-firing scanner candidates -->
+  <div class="card p-4 md:p-5">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="font-semibold tracking-tight">Currently firing in {{ p.name }}</h2>
+      <span class="text-xs text-zinc-500">{{ hits|length }} candidate{{ '' if hits|length == 1 else 's' }}</span>
+    </div>
+    {% if not hits %}
+      <div class="text-sm text-zinc-500">No scanner candidates in this sector right now.</div>
+    {% else %}
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="text-xs uppercase tracking-wide text-zinc-500 border-b border-zinc-200">
+          <tr>
+            <th class="text-left px-2 py-2">Symbol</th>
+            <th class="text-left px-2 py-2">Industry</th>
+            <th class="text-left px-2 py-2">Scanners</th>
+            <th class="text-right px-2 py-2">RS</th>
+            <th class="text-right px-2 py-2">Score</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for h in hits %}
+          <tr class="border-b border-zinc-100 hover:bg-zinc-50">
+            <td class="px-2 py-2 font-medium">{{ h.symbol }}</td>
+            <td class="px-2 py-2 text-zinc-600">{{ h.industry }}</td>
+            <td class="px-2 py-2">
+              <div class="flex flex-wrap gap-1">
+                {% for s in h.scans %}
+                  <span title="score {{ '%.0f'|format(s.score) }}" class="pill text-[10px] bg-zinc-100 text-zinc-700 border-zinc-200">{{ s.label }}</span>
+                {% endfor %}
+              </div>
+            </td>
+            <td class="text-right tabular-nums px-2 py-2 {% if h.rs_rating and h.rs_rating >= 80 %}text-emerald-700 font-semibold{% elif h.rs_rating and h.rs_rating >= 70 %}text-emerald-600{% else %}text-zinc-500{% endif %}">
+              {{ h.rs_rating if h.rs_rating else '—' }}
+            </td>
+            <td class="text-right tabular-nums px-2 py-2">{{ '%.0f'|format(h.max_score) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- All constituents (collapsed by default) -->
+  <details class="card p-4 md:p-5">
+    <summary class="cursor-pointer font-semibold tracking-tight">All {{ constituents|length }} constituents</summary>
+    <div class="mt-3 flex flex-wrap gap-1.5">
+      {% for sym in constituents %}
+        <span class="pill text-[11px] bg-zinc-50 text-zinc-700 border-zinc-200">{{ sym }}</span>
+      {% endfor %}
+    </div>
+  </details>
+
+</div>
+{% endblock %}

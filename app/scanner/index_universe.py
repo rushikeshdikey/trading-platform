@@ -47,9 +47,18 @@ _CACHE_TTL = timedelta(hours=24)
 NSE_INDEX_URLS: dict[str, str] = {
     "total_market": "https://archives.nseindia.com/content/indices/ind_niftytotalmarket_list.csv",
     "nifty_500":    "https://archives.nseindia.com/content/indices/ind_nifty500list.csv",
+    # Microcap 250 — covers smaller names not in Total Market. Critical for
+    # user's actual tradeable universe (MACPOWER / INFOBEAN / STYLAMIND-class
+    # stocks that produce real returns but are too small for Total Market).
+    "microcap_250": "https://archives.nseindia.com/content/indices/ind_niftymicrocap250_list.csv",
 }
 
 DEFAULT_INDEX = "total_market"
+
+# Indices we union together for the composite "tradeable + sector-tagged"
+# universe. Keep this list short — we don't need every sectoral index, just
+# the broad-base indices that have unique stocks.
+COMPOSITE_INDICES: tuple[str, ...] = ("total_market", "microcap_250")
 
 # NSE archives sometimes blackholes connections from cloud IPs unless the
 # request looks like a real browser tab. Mirror the headers that bars_cache
@@ -204,9 +213,156 @@ def qualified_symbols(index_name: str = DEFAULT_INDEX) -> set[str]:
     return {r["symbol"] for r in get_constituents(index_name)}
 
 
+# Path to manual sub-industry overrides — splits NSE's coarse buckets like
+# "Financial Services" (121 stocks) into Banks/Capital Markets/NBFC/Insurance.
+_OVERRIDES_FILE = _DATA_DIR / "industry_overrides.csv"
+_overrides_cache: dict[str, str] | None = None
+_overrides_mtime: float = 0.0
+
+
+def _load_overrides() -> dict[str, str]:
+    """Load symbol → industry overrides from the manual CSV. Re-reads when
+    the file mtime changes — supports live-edit during dev."""
+    global _overrides_cache, _overrides_mtime
+    if not _OVERRIDES_FILE.exists():
+        return {}
+    mtime = _OVERRIDES_FILE.stat().st_mtime
+    if _overrides_cache is not None and mtime == _overrides_mtime:
+        return _overrides_cache
+    out: dict[str, str] = {}
+    try:
+        with _OVERRIDES_FILE.open() as f:
+            reader = csv.reader(f)
+            for row in reader:
+                if not row or row[0].strip().startswith("#"):
+                    continue
+                if row[0].strip().lower() == "symbol":
+                    continue  # header
+                if len(row) < 2:
+                    continue
+                sym = row[0].strip().upper()
+                ind = row[1].strip()
+                if sym and ind:
+                    out[sym] = ind
+    except Exception as exc:  # noqa: BLE001
+        log.warning("industry_overrides load failed: %s", exc)
+        return _overrides_cache or {}
+    _overrides_cache = out
+    _overrides_mtime = mtime
+    log.info("loaded %d sub-industry overrides from %s", len(out), _OVERRIDES_FILE.name)
+    return out
+
+
+def _composite_constituents() -> list[dict]:
+    """Union of all COMPOSITE_INDICES — broader coverage than just total_market.
+
+    Microcap 250 adds smaller liquid names that aren't in Nifty Total Market.
+    Symbols appearing in multiple indices: keep the first (Total Market wins
+    over Microcap because Total Market's classification tends to be cleaner).
+    """
+    seen: dict[str, dict] = {}
+    for idx_name in COMPOSITE_INDICES:
+        try:
+            for r in get_constituents(idx_name):
+                seen.setdefault(r["symbol"], r)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("composite_constituents: skip %s: %s", idx_name, exc)
+    return list(seen.values())
+
+
 def industry_map(index_name: str = DEFAULT_INDEX) -> dict[str, str]:
-    """Symbol → Industry for displaying sector tags in scanner results."""
-    return {r["symbol"]: r["industry"] for r in get_constituents(index_name) if r["industry"]}
+    """Symbol → Industry for displaying sector tags + sector-rotation lookup.
+
+    Composes three sources, in priority order:
+      1. Manual `data/industry_overrides.csv` (Screener.in-style sub-industries)
+      2. Composite of NSE indices (Total Market + Microcap 250)
+      3. Single-index fallback (when caller passes a specific index name)
+
+    Override wins. Then composite. Then the requested index. The override
+    file is keyed by symbol so a single line refines an existing tag.
+    """
+    overrides = _load_overrides()
+
+    if index_name == DEFAULT_INDEX:
+        # Use the broader composite universe for the default code path.
+        rows = _composite_constituents()
+    else:
+        rows = get_constituents(index_name)
+
+    out: dict[str, str] = {}
+    for r in rows:
+        sym = r["symbol"]
+        # Override wins; otherwise NSE's Industry column.
+        ind = overrides.get(sym) or r["industry"]
+        if ind:
+            out[sym] = ind
+
+    # Symbols that exist ONLY in overrides (user's untagged winners) should
+    # still be present even if not in any NSE index.
+    for sym, ind in overrides.items():
+        if sym not in out and ind:
+            out[sym] = ind
+
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Industry → parent-sector hierarchy.
+#
+# Why we need this: RRG (sector_rotation.compute_rotation) needs ≥4
+# constituents per group to be statistically meaningful. After splitting
+# "Financial Services" into Banks / Capital Markets / NBFC / Insurance, some
+# child buckets fall below 4 (e.g. Power - Distribution = 2 stocks).
+#
+# Solution: a stock's RRG-relevant *sector* is the PARENT of its industry.
+# "Power - Distribution" rolls up to "Power", which has 30+ stocks total.
+# The display tag stays fine-grained (good for the user); the RRG signal is
+# coarse-grained (good for statistics).
+#
+# Convention: anything containing " - " is a refined child whose parent is
+# the part before the dash. Other industries are their own parent.
+# ---------------------------------------------------------------------------
+
+# Explicit overrides — for cases where the parent isn't derivable from " - ".
+_INDUSTRY_PARENT_OVERRIDES: dict[str, str] = {
+    "Banks": "Financial Services",
+    "NBFC": "Financial Services",
+    "Capital Markets": "Financial Services",
+    "Insurance": "Financial Services",
+    "Holding Company": "Financial Services",
+    "Defence": "Capital Goods",
+    "Industrial Manufacturing": "Capital Goods",
+    "Electrical Equipment": "Capital Goods",
+    "Healthcare Services": "Healthcare",
+    "Healthcare Equipment": "Healthcare",
+    "Pharmaceuticals": "Healthcare",
+    "Biotechnology": "Healthcare",
+    "Construction Materials": "Construction",
+    "Building Products": "Construction",
+}
+
+
+def industry_to_sector(industry: str) -> str:
+    """Map fine-grained industry → coarse parent sector for RRG grouping.
+
+    Rules (in order):
+      1. Explicit lookup in _INDUSTRY_PARENT_OVERRIDES.
+      2. Anything with " - " in the name: take the part before " - "
+         ("Power - Distribution" → "Power"; "IT - Software" → "IT").
+      3. Else the industry IS its own sector.
+    """
+    if not industry:
+        return industry
+    if industry in _INDUSTRY_PARENT_OVERRIDES:
+        return _INDUSTRY_PARENT_OVERRIDES[industry]
+    if " - " in industry:
+        return industry.split(" - ", 1)[0].strip()
+    return industry
+
+
+def sector_map(index_name: str = DEFAULT_INDEX) -> dict[str, str]:
+    """Symbol → coarse-grained sector for RRG grouping (NOT for display)."""
+    return {sym: industry_to_sector(ind) for sym, ind in industry_map(index_name).items()}
 
 
 def status() -> dict:

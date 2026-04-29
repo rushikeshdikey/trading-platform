@@ -9,7 +9,8 @@
       <h1 class="text-2xl font-semibold tracking-tight">Scanners</h1>
       <p class="text-zinc-500 text-sm mt-1 max-w-3xl">
         EOD swing setups across the Nifty Total Market index plus liquid non-index names with bars.
-        Auto-refreshed at 15:35 IST every weekday.
+        Auto-refresh runs at 15:35 IST every weekday <em class="not-italic text-zinc-400">— when the app is alive at that minute.</em>
+        Boot also tries a one-shot catch-up if the cache missed today's window.
       </p>
     </div>
     <div class="flex items-center gap-2">
@@ -28,24 +29,36 @@
   {% set err = request.query_params.get('error') %}
   {% set rf = request.query_params.get('refresh_fund') %}
   {% set rf_err = request.query_params.get('refresh_fund_error') %}
-  {% if scan == 'started' %}<div class="p-3 rounded-lg bg-sky-50 border border-sky-200 text-sky-800 text-sm"><strong>Scan started in background.</strong> Running 7 detectors against ~4500 symbols × 252 bars — typically 30-90 sec on prod. Reload the page to see fresh results when the cache updates.</div>
+  {% if scan == 'started' %}<div class="p-3 rounded-lg bg-sky-50 border border-sky-200 text-sky-800 text-sm"><strong>Scan started in background.</strong> Running 7 detectors against ~4600 symbols × 252 bars — about 4-6 minutes on prod (t4g.medium, 2 vCPU). The page will auto-reload every 30 sec while the scan is in progress.</div>
   {% elif scan == 'already_running' %}<div class="p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm"><strong>A scan is already running.</strong> Wait for it to finish before kicking off another.</div>{% endif %}
 
-  {# Live scan-run state — same pattern as the bars-refresh banner. #}
+  {# Live scan-run state — same pattern as the bars-refresh banner.
+     When running=true we add data-scan-running so the JS at page-bottom
+     can poll-reload until it finishes. #}
   {% if scan_run_state and (scan_run_state.running or scan_run_state.last_error) %}
-  <div class="p-3 rounded-lg text-xs flex items-center gap-3 flex-wrap
+  <div {% if scan_run_state.running %}data-scan-running="1"{% endif %}
+       class="p-3 rounded-lg text-xs flex items-center gap-3 flex-wrap
               {% if scan_run_state.running %}bg-sky-50 border border-sky-200 text-sky-800
               {% else %}bg-rose-50 border border-rose-200 text-rose-800{% endif %}">
     {% if scan_run_state.running %}
       <i data-lucide="loader" class="w-4 h-4 animate-spin"></i>
       <strong>Scan in progress.</strong>
-      <span>Started {{ scan_run_state.started_at }} (UTC). Reload the page when done — the candidate counts in the cards below will update.</span>
+      <span>Started {{ scan_run_state.started_at }} (UTC). Page auto-reloads every 30 sec — about 4-6 min total on prod.</span>
     {% else %}
       <i data-lucide="alert-triangle" class="w-4 h-4"></i>
       <strong>Last scan failed:</strong>
       <span class="font-mono">{{ scan_run_state.last_error }}</span>
     {% endif %}
   </div>
+  <script>
+    // Auto-reload only while a scan is genuinely in progress. The banner
+    // disappears server-side when scan_run_state.running flips false, so
+    // the next reload is the last one. data-scan-running is the trigger.
+    (function() {
+      if (!document.querySelector('[data-scan-running="1"]')) return;
+      setTimeout(() => { window.location.href = '/scanners'; }, 30000);
+    })();
+  </script>
   {% endif %}
   {% if refresh == 'started' %}
     {% if cache.rows and cache.rows > 200000 %}
@@ -64,14 +77,15 @@
      (almost always because deploys keep restarting the app container
      and killing the in-flight refresh thread). #}
   {% if bars_refresh_state and (bars_refresh_state.running or bars_refresh_state.last_summary or bars_refresh_state.last_error) %}
-  <div class="p-3 rounded-lg text-xs flex items-center gap-3 flex-wrap
+  <div {% if bars_refresh_state.running %}data-bars-refresh-running="1"{% endif %}
+       class="p-3 rounded-lg text-xs flex items-center gap-3 flex-wrap
               {% if bars_refresh_state.running %}bg-sky-50 border border-sky-200 text-sky-800
               {% elif bars_refresh_state.last_error %}bg-rose-50 border border-rose-200 text-rose-800
               {% else %}bg-zinc-50 border border-zinc-200 text-zinc-700{% endif %}">
     {% if bars_refresh_state.running %}
       <i data-lucide="loader" class="w-4 h-4 animate-spin"></i>
       <strong>Bars refresh in progress.</strong>
-      <span>Started {{ bars_refresh_state.started_at }} (UTC). The Bars count above ticks up live as days commit.</span>
+      <span>Started {{ bars_refresh_state.started_at }} (UTC). Page auto-reloads every 15 sec — usually 5-30 sec total on a warm cache.</span>
     {% elif bars_refresh_state.last_error %}
       <i data-lucide="alert-triangle" class="w-4 h-4"></i>
       <strong>Last bars refresh failed:</strong>
@@ -84,6 +98,11 @@
       <span>+{{ s.rows_upserted }} rows · {{ s.days_downloaded }} days downloaded · {{ s.days_skipped_existing }} skipped (already cached) · {{ s.days_failed }} failed · finished {{ bars_refresh_state.finished_at }} UTC</span>
     {% endif %}
   </div>
+  <script>
+    if (document.querySelector('[data-bars-refresh-running="1"]')) {
+      setTimeout(() => { window.location.href = '/scanners'; }, 15000);
+    }
+  </script>
   {% endif %}
   {% if rf %}<div class="p-3 rounded-lg bg-sky-50 border border-sky-200 text-sky-800 text-sm"><strong>Market-cap refresh:</strong> {{ rf }} (running in background — reload to see progress)</div>{% endif %}
   {% if rf_err %}<div class="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-sm"><strong>Market-cap refresh error:</strong> {{ rf_err }}</div>{% endif %}
@@ -161,7 +180,7 @@
   {# ====================== UNIFIED RESULTS (cached) ===================== #}
   {% if unified %}
   {% set _row_meta = [] %}
-  {% for row in unified.rows %}{% set _ = _row_meta.append({"symbol": row.symbol, "tier": row.tier, "close": row.primary.close, "watching": row.on_watchlist, "setups": row.scans|map(attribute="type")|list}) %}{% endfor %}
+  {% for row in unified.rows %}{% set _ = _row_meta.append({"symbol": row.symbol, "tier": row.tier, "close": row.primary.close, "composite": row.composite, "watching": row.on_watchlist, "setups": row.scans|map(attribute="type")|list}) %}{% endfor %}
 
   <div class="card"
        x-data='unifiedScanner({{ _row_meta|tojson }}, "Multi-scan")'
@@ -172,10 +191,26 @@
           <i data-lucide="target" class="w-4 h-4 text-zinc-500"></i>
           {{ unified.rows|length }} candidates across all 4 scanners
         </div>
-        <div class="card-description flex flex-wrap gap-x-3">
+        <div class="card-description flex flex-wrap gap-x-3 items-center">
           <span>Universe {{ unified.universe_size }}</span>
-          <span>Cached at {{ unified.oldest_run_at.strftime('%H:%M') }} IST today · live re-run took {{ unified.total_elapsed_ms }}ms total</span>
-          <span class="text-emerald-700">Loaded from cache · &lt; 50ms</span>
+          {% if unified.sector_tagged_count %}
+            <span title="Symbols with sector quadrant context">{{ unified.sector_tagged_count }} sector-tagged</span>
+          {% endif %}
+          {% if unified.regime %}
+            {% set r = unified.regime %}
+            <span class="pill text-[10px] {% if r.is_blocked %}bg-rose-100 text-rose-800 border-rose-300{% elif r.multiplier >= 1.0 %}bg-emerald-100 text-emerald-800 border-emerald-300{% elif r.multiplier >= 0.9 %}bg-emerald-50 text-emerald-700 border-emerald-200{% else %}bg-amber-50 text-amber-700 border-amber-200{% endif %}" title="Regime multiplier {{ '%.1f'|format(r.multiplier) }} — multiplies every candidate's composite score">Regime: {{ r.label }}</span>
+          {% endif %}
+          {% set age_h = unified.cache_age_hours %}
+          {% if age_h < 6 %}
+            <span class="text-emerald-700" title="Cache run_at: {{ unified.oldest_run_at }} UTC">Cached {{ '%.1f'|format(age_h) }}h ago · fresh</span>
+          {% elif age_h < 24 %}
+            <span class="text-zinc-600" title="Cache run_at: {{ unified.oldest_run_at }} UTC">Cached {{ '%.0f'|format(age_h) }}h ago</span>
+          {% elif age_h < 48 %}
+            <span class="text-amber-700 font-semibold" title="Cache run_at: {{ unified.oldest_run_at }} UTC">⚠ Stale: {{ '%.0f'|format(age_h) }}h old · re-run scanners</span>
+          {% else %}
+            <span class="text-rose-700 font-bold" title="Cache run_at: {{ unified.oldest_run_at }} UTC">⚠ STALE: {{ '%.0f'|format(age_h / 24) }}d old · auto-refresh missed · click Run all live</span>
+          {% endif %}
+          <span class="text-zinc-500">re-run takes {{ unified.total_elapsed_ms }}ms</span>
         </div>
       </div>
 
@@ -394,6 +429,9 @@
                 Symbol <span x-show="sortKey === 'symbol'" x-text="sortDir > 0 ? '▲' : '▼'" class="text-zinc-400"></span>
               </th>
               <th>Setups</th>
+              <th class="cursor-pointer select-none" @click="sortBy('composite')" title="Composite score: scanner score × confluence × RS × Minervini × sector × regime. The canonical ranking — Auto-Pilot picks from this.">
+                CS <span x-show="sortKey === 'composite'" x-text="sortDir > 0 ? '▲' : '▼'" class="text-zinc-400"></span>
+              </th>
               <th class="cursor-pointer select-none" @click="sortBy('score')">
                 Score <span x-show="sortKey === 'score'" x-text="sortDir > 0 ? '▲' : '▼'" class="text-zinc-400"></span>
               </th>
@@ -433,7 +471,12 @@
               <td class="!py-1">
                 {% if row.sparkline %}{{ row.sparkline|safe }}{% else %}<span class="text-zinc-300 text-xs">—</span>{% endif %}
               </td>
-              <td class="font-semibold">{{ c.symbol }}</td>
+              <td>
+                <div class="font-semibold">{{ c.symbol }}</div>
+                {% if row.sector_quadrant %}
+                  <span title="RRG quadrant" class="pill text-[9px] {% if row.sector_quadrant == 'Leading' %}bg-emerald-100 text-emerald-800 border-emerald-300{% elif row.sector_quadrant == 'Improving' %}bg-sky-50 text-sky-800 border-sky-200{% elif row.sector_quadrant == 'Weakening' %}bg-amber-50 text-amber-800 border-amber-200{% else %}bg-rose-50 text-rose-800 border-rose-200{% endif %}">{{ row.sector_quadrant }}</span>
+                {% endif %}
+              </td>
               <td>
                 <div class="flex flex-wrap gap-1">
                   {% for sc in row.scans %}
@@ -443,7 +486,8 @@
                   {% endfor %}
                 </div>
               </td>
-              <td class="tabular-nums font-semibold">{{ '{:.0f}'.format(c.score) }}</td>
+              <td class="tabular-nums font-bold {% if row.composite and row.composite >= 90 %}text-emerald-700{% elif row.composite and row.composite >= 70 %}text-emerald-600{% elif row.composite and row.composite >= 45 %}text-zinc-700{% else %}text-zinc-400{% endif %}" title="{{ row.tier_reason }}">{{ '{:.0f}'.format(row.composite) if row.composite is not none else '—' }}</td>
+              <td class="tabular-nums">{{ '{:.0f}'.format(c.score) }}</td>
               <td class="tabular-nums">₹{{ '{:,.2f}'.format(c.close) }}</td>
               <td class="tabular-nums font-semibold">₹{{ '{:,.2f}'.format(c.suggested_entry) }}</td>
               <td class="tabular-nums text-rose-700">₹{{ '{:,.2f}'.format(c.suggested_sl) }}</td>
@@ -501,6 +545,12 @@
                   {% elif row.tier == 'A' %}bg-emerald-50 text-emerald-700 border-emerald-200
                   {% else %}bg-zinc-100 text-zinc-700 border-zinc-200{% endif %}">{{ row.tier }}</span>
                 <span class="font-semibold text-base">{{ c.symbol }}</span>
+                {% if row.composite %}
+                  <span title="Composite score" class="pill text-[10px] bg-zinc-100 text-zinc-700 border-zinc-200 font-bold tabular-nums">CS {{ '%.0f'|format(row.composite) }}</span>
+                {% endif %}
+                {% if row.sector_quadrant %}
+                  <span class="pill text-[9px] {% if row.sector_quadrant == 'Leading' %}bg-emerald-100 text-emerald-800 border-emerald-300{% elif row.sector_quadrant == 'Improving' %}bg-sky-50 text-sky-800 border-sky-200{% elif row.sector_quadrant == 'Weakening' %}bg-amber-50 text-amber-800 border-amber-200{% else %}bg-rose-50 text-rose-800 border-rose-200{% endif %}">{{ row.sector_quadrant }}</span>
+                {% endif %}
                 {% if row.sparkline %}<span class="ml-auto">{{ row.sparkline|safe }}</span>{% endif %}
               </div>
               <div class="flex flex-wrap gap-1 mt-1">
@@ -967,7 +1017,7 @@
         searchQuery: '',
 
         // Sort
-        sortKey: 'tier',
+        sortKey: 'composite',  // composite is the canonical ranking — Auto-Pilot uses it
         sortDir: 1,        // 1 desc (A+ first / largest first), -1 asc
 
         // Keyboard cursor — index in rowMeta of the highlighted row, or -1.
@@ -1056,12 +1106,14 @@
             const valA = key === 'tier' ? tierRank[ma.tier] || 0
                        : key === 'symbol' ? ma.symbol
                        : key === 'close' ? ma.close
-                       : key === 'score' ? parseFloat(a.querySelector('td:nth-child(6)')?.textContent || 0)
+                       : key === 'composite' ? (ma.composite || 0)
+                       : key === 'score' ? parseFloat(a.querySelector('td:nth-child(7)')?.textContent || 0)
                        : 0;
             const valB = key === 'tier' ? tierRank[mb.tier] || 0
                        : key === 'symbol' ? mb.symbol
                        : key === 'close' ? mb.close
-                       : key === 'score' ? parseFloat(b.querySelector('td:nth-child(6)')?.textContent || 0)
+                       : key === 'composite' ? (mb.composite || 0)
+                       : key === 'score' ? parseFloat(b.querySelector('td:nth-child(7)')?.textContent || 0)
                        : 0;
             if (valA < valB) return -1 * dir;
             if (valA > valB) return  1 * dir;

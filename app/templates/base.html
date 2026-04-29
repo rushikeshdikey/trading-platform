@@ -287,6 +287,9 @@
             <a href="/sector-rotation" class="{{ _link_class }} {% if path.startswith('/sector-rotation') %}{{ _active_class }}{% endif %}">
               <i data-lucide="git-compare-arrows" class="w-5 h-5"></i>Sector rotation
             </a>
+            <a href="/sectors" class="{{ _link_class }} {% if path == '/sectors' or path.startswith('/sectors/') %}{{ _active_class }}{% endif %}">
+              <i data-lucide="layers" class="w-5 h-5"></i>Sectors
+            </a>
             <a href="/scanners/ipos" class="{{ _link_class }} {% if path == '/scanners/ipos' %}{{ _active_class }}{% endif %}">
               <i data-lucide="sparkles" class="w-5 h-5"></i>Recent IPOs
             </a>
@@ -372,8 +375,8 @@
       <a href="/breadth" class="nav-link hidden md:inline-flex {% if path.startswith('/breadth') %}active{% endif %}">
         <i data-lucide="bar-chart-3"></i>Breadth
       </a>
-      <a href="/sector-rotation" class="nav-link hidden md:inline-flex {% if path.startswith('/sector-rotation') %}active{% endif %}">
-        <i data-lucide="git-compare-arrows"></i>Sectors
+      <a href="/sectors" class="nav-link hidden md:inline-flex {% if path == '/sectors' or path.startswith('/sectors/') %}active{% endif %}">
+        <i data-lucide="layers"></i>Sectors
       </a>
 
       <div class="ml-auto hidden md:flex items-center gap-1">
@@ -549,6 +552,7 @@
         { label: 'Scanners',          hint: '4 EOD swing setups',               url: '/scanners',       icon: 'radar',            section: 'Page' },
         { label: 'Watchlist',         hint: 'Saved tickers + alerts',           url: '/watchlist',      icon: 'bookmark',         section: 'Page' },
         { label: 'Breadth',           hint: 'NSE adv/dec + market mood',        url: '/breadth',        icon: 'activity',         section: 'Page' },
+        { label: 'Sectors',           hint: 'Industry strength heatmap',         url: '/sectors',        icon: 'layers',           section: 'Page' },
         { label: 'Sector Rotation',   hint: 'RRG: which sectors are leading',   url: '/sector-rotation', icon: 'git-compare-arrows', section: 'Page' },
         { label: 'Recent IPOs',       hint: 'Listings from the last 4 quarters', url: '/scanners/ipos',   icon: 'sparkles',          section: 'Page' },
         // New scanners

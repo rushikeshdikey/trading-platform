@@ -27,7 +27,7 @@ from typing import Iterable
 
 from sqlalchemy.orm import Session
 
-from ..models import ScanCache, ScanRun
+from ..models import ScanCache, ScanHistory, ScanRun
 from . import bars_cache
 from . import fundamentals
 from . import universe as universe_mod
@@ -268,19 +268,29 @@ def run_all_scans(
     return results, per_scan_ms, total_ms, len(symbols)
 
 
+SCAN_HISTORY_RETENTION_DAYS = 90
+
+
 def _upsert_scan_cache(
     db: Session, scan_type: str, universe_size: int, candidates_count: int,
     elapsed_ms: int, top: list[Candidate], now: datetime,
 ) -> None:
-    """Upsert one row in the shared ScanCache table.
+    """Upsert one row in the shared ScanCache table AND append a daily row
+    to ScanHistory for forensic replay.
 
     Why not ``ON CONFLICT``: SQLite + Postgres differ on the conflict syntax;
     using a get-then-mutate keeps the migration of dialects portable. Race
     conditions don't matter — this table only ever has one writer at a time
     (UI button or scheduler).
+
+    ScanHistory: one row per (scan_date, scan_type). If the scanner runs
+    multiple times in one day, the latest run wins (overwrite). 90-day
+    rolling retention is enforced opportunistically here.
     """
-    existing = db.get(ScanCache, scan_type)
     payload = _serialize_candidates(top)
+
+    # 1. ScanCache — always overwrite (latest only).
+    existing = db.get(ScanCache, scan_type)
     if existing is None:
         db.add(ScanCache(
             scan_type=scan_type, run_at=now,
@@ -293,6 +303,33 @@ def _upsert_scan_cache(
         existing.candidates_count = candidates_count
         existing.elapsed_ms = elapsed_ms
         existing.payload = payload
+
+    # 2. ScanHistory — append (or overwrite same-day row).
+    today = now.date()
+    hist = (
+        db.query(ScanHistory)
+        .filter(ScanHistory.scan_date == today, ScanHistory.scan_type == scan_type)
+        .first()
+    )
+    if hist is None:
+        db.add(ScanHistory(
+            scan_date=today, scan_type=scan_type, run_at=now,
+            universe_size=universe_size, candidates_count=candidates_count,
+            elapsed_ms=elapsed_ms, payload=payload,
+        ))
+    else:
+        hist.run_at = now
+        hist.universe_size = universe_size
+        hist.candidates_count = candidates_count
+        hist.elapsed_ms = elapsed_ms
+        hist.payload = payload
+
+    # 3. Janitor — drop rows older than the retention window. Cheap; a
+    # single DELETE per scan_type per day. Indexed on scan_date.
+    cutoff = today - timedelta(days=SCAN_HISTORY_RETENTION_DAYS)
+    db.query(ScanHistory).filter(ScanHistory.scan_date < cutoff).delete(
+        synchronize_session=False
+    )
 
 
 def _detect_one_timed(

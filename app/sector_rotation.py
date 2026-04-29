@@ -76,6 +76,19 @@ class SectorPoint:
     trail: list[tuple[float, float]] = field(default_factory=list)
     # Latest cumulative return vs market over RS_RATIO_WINDOW
     relative_return_pct: float = 0.0
+    # Multi-timeframe price return on the synthetic sector index. Computed
+    # from the equal-weight constituent series (the same chain of returns
+    # we use for RS); always vs the broad market, not absolute. NaN when
+    # the lookback window doesn't have enough bars.
+    return_1d_pct: float = 0.0
+    return_1w_pct: float = 0.0
+    return_1m_pct: float = 0.0
+    return_3m_pct: float = 0.0
+    # % of constituents trading above their 50-DMA. Read in `compute_sector_strength`.
+    pct_above_50dma: float = 0.0
+    # Number of scanner candidates currently firing in this sector (filled
+    # in by `compute_sector_strength` from ScanCache).
+    scanner_hits: int = 0
 
 
 def _build_sector_series(
@@ -184,8 +197,13 @@ def _roc_rebased(series: list[float], window: int) -> list[float]:
 def compute_rotation(db: Session, *, lookback_days: int = LOOKBACK_DAYS) -> list[SectorPoint]:
     """End-to-end: build sector series → RS-Ratio → RS-Momentum → points.
 
-    Always returns a list (possibly empty if data is too sparse). Never
-    raises; logs and skips on any per-symbol issue.
+    Groups by COARSE-GRAINED parent sector, not fine-grained industry. So
+    "Power - Distribution" (2 stocks) rolls up to "Power" (30+ stocks)
+    instead of being dropped for too-few constituents.
+
+    The fine-grained tag is preserved for display — the symbol_quadrant_map
+    helper exposes both. Always returns a list (possibly empty if data is
+    too sparse). Never raises; logs and skips on any per-symbol issue.
     """
     from .scanner import index_universe as idx_uni
 
@@ -199,10 +217,56 @@ def compute_rotation(db: Session, *, lookback_days: int = LOOKBACK_DAYS) -> list
     if not ind_map:
         return []
 
-    sector_to_symbols: dict[str, list[str]] = defaultdict(list)
+    # Hierarchical grouping:
+    #   1. First try grouping at the FINE industry level (Capital Markets,
+    #      Power - Generation, etc.) — preserves rotation signal for splits.
+    #   2. Industries with <MIN_CONSTITUENTS_PER_SECTOR fall back to PARENT
+    #      ("Power - Distribution" with 2 stocks → "Power" with 30+).
+    #   3. The parent fallback bucket aggregates ALL the parent's stocks
+    #      (not just the orphaned ones), so the inherited quadrant reflects
+    #      the broad sector trend, not a small fragment of it.
+    industry_constituents: dict[str, list[str]] = defaultdict(list)
     for sym, industry in ind_map.items():
         if industry:
+            industry_constituents[industry].append(sym)
+
+    # Decide which industries are large enough for their own RRG point.
+    kept_industries = {
+        ind for ind, syms in industry_constituents.items()
+        if len(syms) >= MIN_CONSTITUENTS_PER_SECTOR
+    }
+
+    sector_to_symbols: dict[str, list[str]] = defaultdict(list)
+    for sym, industry in ind_map.items():
+        if not industry:
+            continue
+        if industry in kept_industries:
             sector_to_symbols[industry].append(sym)
+            continue
+        # Industry too small to RRG on its own — fall back to parent.
+        parent = idx_uni.industry_to_sector(industry)
+        # Parent bucket pools EVERY parent-sector symbol so the signal is
+        # broad. We rebuild parent membership from scratch here.
+        # (Done in second pass below — for now, mark with parent placeholder.)
+        sector_to_symbols[f"__parent__{parent}"].append(sym)
+
+    # Second pass: for each parent placeholder, replace with the FULL list
+    # of stocks under that parent (across all child industries, kept or not).
+    parent_to_all_syms: dict[str, list[str]] = defaultdict(list)
+    for sym, industry in ind_map.items():
+        if industry:
+            parent_to_all_syms[idx_uni.industry_to_sector(industry)].append(sym)
+
+    rebuilt: dict[str, list[str]] = {}
+    for key, syms in sector_to_symbols.items():
+        if key.startswith("__parent__"):
+            parent = key[len("__parent__"):]
+            # Use the full parent-sector pool. The orphaned stocks will
+            # inherit this parent's quadrant via symbol_quadrant_map.
+            rebuilt[parent] = parent_to_all_syms[parent]
+        else:
+            rebuilt[key] = syms
+    sector_to_symbols = rebuilt
 
     # Pull bars only for the symbols we care about — keeps memory reasonable.
     all_syms = [s for syms in sector_to_symbols.values() for s in syms]
@@ -250,6 +314,18 @@ def compute_rotation(db: Session, *, lookback_days: int = LOOKBACK_DAYS) -> list
         else:
             relative_return_pct = 0.0
 
+        # Multi-timeframe sector returns (absolute, not vs market).
+        s_prices = sector_series[sector][:n_dates]
+        ret = lambda lookback: (
+            (s_prices[-1] / s_prices[-1 - lookback] - 1) * 100
+            if len(s_prices) > lookback and s_prices[-1 - lookback] > 0
+            else 0.0
+        )
+        return_1d = ret(1)
+        return_1w = ret(5)
+        return_1m = ret(21)
+        return_3m = ret(63)
+
         out.append(SectorPoint(
             name=sector,
             constituents=len(sector_to_symbols[sector]),
@@ -258,6 +334,10 @@ def compute_rotation(db: Session, *, lookback_days: int = LOOKBACK_DAYS) -> list
             rs_momentum=round(rs_m, 2),
             trail=[(round(a, 2), round(b, 2)) for a, b in trail],
             relative_return_pct=round(relative_return_pct, 2),
+            return_1d_pct=round(return_1d, 2),
+            return_1w_pct=round(return_1w, 2),
+            return_1m_pct=round(return_1m, 2),
+            return_3m_pct=round(return_3m, 2),
         ))
 
     # Order: Leading first (most actionable), then Improving, Weakening, Lagging.
@@ -274,3 +354,131 @@ def latest_anchor_date(db: Session) -> date | None:
     from sqlalchemy import func
     row = db.query(func.max(DailyBar.date)).scalar()
     return row
+
+
+def compute_sector_strength(db: Session, *, lookback_days: int = LOOKBACK_DAYS) -> list[SectorPoint]:
+    """Like compute_rotation, but also fills pct_above_50dma + scanner_hits.
+
+    Used by the /sectors heatmap page. compute_rotation alone is enough for
+    the RRG chart; this wrapper adds the breadth + scanner-firing signals
+    that turn the heatmap into a "what's actionable" view.
+    """
+    from .scanner import index_universe as idx_uni
+    from .scanner import bars_cache, runner as scanner_runner
+
+    points = compute_rotation(db, lookback_days=lookback_days)
+    if not points:
+        return []
+
+    # 1. % above 50-DMA per sector. Reload bars (compute_rotation already did,
+    # but it dropped them); re-using would need a refactor. Cheap enough.
+    ind_map = idx_uni.industry_map()
+    parent_map = {sym: idx_uni.industry_to_sector(ind) for sym, ind in ind_map.items()}
+    # For each SectorPoint name, build the symbol set:
+    sector_symbols: dict[str, list[str]] = defaultdict(list)
+    for sym, ind in ind_map.items():
+        # Match against both the fine industry AND the parent — SectorPoint
+        # names can be either ("Capital Markets" or "Power").
+        sector_symbols[ind].append(sym)
+        sector_symbols[parent_map[sym]].append(sym)
+
+    all_syms = list({s for syms in sector_symbols.values() for s in syms})
+    bars_map = bars_cache.bars_by_symbol(db, all_syms, lookback_days=80)
+
+    def _pct_above_50dma(syms: list[str]) -> float:
+        n_above, n_total = 0, 0
+        for s in syms:
+            bars = bars_map.get(s) or []
+            if len(bars) < 50:
+                continue
+            closes = [b.close for b in bars[-50:]]
+            sma50 = sum(closes) / 50
+            if bars[-1].close > sma50:
+                n_above += 1
+            n_total += 1
+        return (100.0 * n_above / n_total) if n_total > 0 else 0.0
+
+    # 2. Scanner hits per sector — count distinct symbols across all scans.
+    cached = scanner_runner.latest_cached_all(db, max_age_minutes=72 * 60)
+    sector_hits: dict[str, set[str]] = defaultdict(set)
+    if cached is not None:
+        results, _rows = cached
+        for _scan_type, candidates in results.items():
+            for c in candidates:
+                ind = ind_map.get(c.symbol)
+                if not ind:
+                    continue
+                # Add to BOTH the fine industry bucket AND the parent — each
+                # SectorPoint should see its own hits.
+                sector_hits[ind].add(c.symbol)
+                sector_hits[parent_map[c.symbol]].add(c.symbol)
+
+    # 3. Stamp the enrichments onto each SectorPoint.
+    for p in points:
+        syms = sector_symbols.get(p.name, [])
+        p.pct_above_50dma = round(_pct_above_50dma(syms), 1)
+        p.scanner_hits = len(sector_hits.get(p.name, set()))
+
+    return points
+
+
+# ---------------------------------------------------------------------------
+# Symbol → quadrant lookup (used by composite scoring).
+#
+# `compute_rotation` is expensive (loads bars for ~750 symbols, runs Z-score
+# windows). We cache by anchor_date so the lookup is free on subsequent
+# scoring calls within the same trading day.
+# ---------------------------------------------------------------------------
+
+_quadrant_cache: dict | None = None  # {"as_of": date, "map": {symbol: quadrant}}
+
+
+def symbol_quadrant_map(db: Session) -> dict[str, str]:
+    """Return a {symbol → quadrant} dict for use in composite scoring.
+
+    Untagged symbols (not in NSE Total Market) get no entry — caller treats
+    that as "unknown sector, neutral multiplier". Cached for the trading day.
+    """
+    global _quadrant_cache
+    from .scanner import index_universe as idx_uni
+
+    anchor = latest_anchor_date(db)
+    if anchor is None:
+        return {}
+
+    if _quadrant_cache is not None and _quadrant_cache.get("as_of") == anchor:
+        return _quadrant_cache["map"]
+
+    # Recompute. compute_rotation groups at the parent-sector level, so
+    # we look up via industry_to_sector() to find each symbol's coarse
+    # bucket and read its quadrant from there.
+    try:
+        rotation = compute_rotation(db)
+        ind_map = idx_uni.industry_map()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("symbol_quadrant_map: rotation failed: %s", exc)
+        return {}
+
+    sector_to_quadrant = {p.name: p.quadrant for p in rotation}
+    out: dict[str, str] = {}
+    for sym, industry in ind_map.items():
+        # Hierarchical lookup: try the fine industry first (e.g.
+        # "Capital Markets"). If not classified — usually because it had
+        # <MIN_CONSTITUENTS — fall back to the parent ("Financial Services").
+        q = sector_to_quadrant.get(industry)
+        if not q:
+            parent = idx_uni.industry_to_sector(industry)
+            q = sector_to_quadrant.get(parent)
+        if q:
+            out[sym] = q
+
+    _quadrant_cache = {"as_of": anchor, "map": out}
+    log.info("symbol_quadrant_map: %d tagged symbols across %d sector buckets",
+             len(out), len(sector_to_quadrant))
+    return out
+
+
+def invalidate_quadrant_cache() -> None:
+    """Drop the cached quadrant lookup (after sector recompute or daily roll)."""
+    global _quadrant_cache
+    _quadrant_cache = None

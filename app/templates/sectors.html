@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block title %}Sectors · Trading Journal{% endblock %}
+{% block content %}
+{% macro return_cell(v) -%}
+  {%- set v = v or 0 -%}
+  <td class="text-right tabular-nums {% if v > 5 %}text-emerald-700 font-semibold{% elif v > 0 %}text-emerald-600{% elif v < -5 %}text-rose-700 font-semibold{% elif v < 0 %}text-rose-600{% else %}text-zinc-500{% endif %}">
+    {{ '%+.2f'|format(v) }}%
+  </td>
+{%- endmacro %}
+{% macro quadrant_pill(q) -%}
+  {%- if q == 'Leading' -%}
+    <span class="pill text-[10px] font-bold bg-emerald-100 text-emerald-800 border-emerald-300">{{ q }}</span>
+  {%- elif q == 'Improving' -%}
+    <span class="pill text-[10px] font-bold bg-sky-50 text-sky-800 border-sky-200">{{ q }}</span>
+  {%- elif q == 'Weakening' -%}
+    <span class="pill text-[10px] font-bold bg-amber-50 text-amber-800 border-amber-200">{{ q }}</span>
+  {%- else -%}
+    <span class="pill text-[10px] font-bold bg-rose-50 text-rose-800 border-rose-200">{{ q }}</span>
+  {%- endif -%}
+{%- endmacro %}
+<div class="max-w-7xl mx-auto space-y-6">
+
+  <!-- Header -->
+  <div class="flex items-start justify-between flex-wrap gap-3">
+    <div>
+      <h1 class="text-2xl font-semibold tracking-tight">Sectors</h1>
+      <p class="text-zinc-500 text-sm mt-1 max-w-3xl">
+        Industry-level strength heatmap. Multi-timeframe returns + breadth +
+        scanner-firing count, ranked by RS-Ratio. Tailwinds beat patterns —
+        trade names in Leading sectors, avoid Lagging.
+      </p>
+    </div>
+    <div class="text-xs text-zinc-500 tabular-nums">
+      {% if anchor_date %}as of {{ anchor_date }}{% endif %}
+    </div>
+  </div>
+
+  <!-- Quadrant counts -->
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+    <div class="card px-4 py-3 border-l-4 border-emerald-500">
+      <div class="text-[11px] font-bold uppercase tracking-widest text-emerald-700">Leading</div>
+      <div class="text-2xl font-bold tabular-nums">{{ quadrant_counts.Leading }}</div>
+      <div class="text-xs text-zinc-500">trade with the trend</div>
+    </div>
+    <div class="card px-4 py-3 border-l-4 border-sky-500">
+      <div class="text-[11px] font-bold uppercase tracking-widest text-sky-700">Improving</div>
+      <div class="text-2xl font-bold tabular-nums">{{ quadrant_counts.Improving }}</div>
+      <div class="text-xs text-zinc-500">early rotation in</div>
+    </div>
+    <div class="card px-4 py-3 border-l-4 border-amber-500">
+      <div class="text-[11px] font-bold uppercase tracking-widest text-amber-700">Weakening</div>
+      <div class="text-2xl font-bold tabular-nums">{{ quadrant_counts.Weakening }}</div>
+      <div class="text-xs text-zinc-500">trim, don't add</div>
+    </div>
+    <div class="card px-4 py-3 border-l-4 border-rose-500">
+      <div class="text-[11px] font-bold uppercase tracking-widest text-rose-700">Lagging</div>
+      <div class="text-2xl font-bold tabular-nums">{{ quadrant_counts.Lagging }}</div>
+      <div class="text-xs text-zinc-500">avoid new longs</div>
+    </div>
+  </div>
+
+  <!-- Sector heatmap table -->
+  {% if not points %}
+    <div class="card p-6 text-sm text-zinc-500">
+      No sector data yet. Visit <a href="/scanners" class="link">/scanners</a> and refresh bars first.
+    </div>
+  {% else %}
+    <div class="card overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="text-xs uppercase tracking-wide text-zinc-500 border-b border-zinc-200">
+          <tr>
+            <th class="text-left px-4 py-2.5">Sector</th>
+            <th class="text-center px-2 py-2.5">Quadrant</th>
+            <th class="text-right px-2 py-2.5" title="Number of constituent stocks">N</th>
+            <th class="text-right px-2 py-2.5" title="RS-Ratio (>100 = outperforming market)">RS-R</th>
+            <th class="text-right px-2 py-2.5" title="RS-Momentum (>100 = accelerating)">RS-M</th>
+            <th class="text-right px-2 py-2.5">1d</th>
+            <th class="text-right px-2 py-2.5">1w</th>
+            <th class="text-right px-2 py-2.5">1m</th>
+            <th class="text-right px-2 py-2.5">3m</th>
+            <th class="text-right px-2 py-2.5" title="% of constituents above their 50-DMA">&gt;50DMA</th>
+            <th class="text-right px-4 py-2.5" title="Number of scanner candidates currently firing in this sector">Hits</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in points %}
+          <tr class="border-b border-zinc-100 hover:bg-zinc-50">
+            <td class="px-4 py-2.5">
+              <a href="/sectors/{{ p.name|urlencode }}" class="font-medium text-sky-700 hover:underline">{{ p.name }}</a>
+            </td>
+            <td class="text-center px-2 py-2.5">{{ quadrant_pill(p.quadrant) }}</td>
+            <td class="text-right tabular-nums px-2 py-2.5 text-zinc-600">{{ p.constituents }}</td>
+            <td class="text-right tabular-nums px-2 py-2.5 {% if p.rs_ratio >= 100 %}text-emerald-700 font-semibold{% else %}text-rose-700{% endif %}">{{ '%.1f'|format(p.rs_ratio) }}</td>
+            <td class="text-right tabular-nums px-2 py-2.5 {% if p.rs_momentum >= 100 %}text-emerald-700 font-semibold{% else %}text-rose-700{% endif %}">{{ '%.1f'|format(p.rs_momentum) }}</td>
+            {{ return_cell(p.return_1d_pct) }}
+            {{ return_cell(p.return_1w_pct) }}
+            {{ return_cell(p.return_1m_pct) }}
+            {{ return_cell(p.return_3m_pct) }}
+            <td class="text-right tabular-nums px-2 py-2.5 {% if p.pct_above_50dma >= 70 %}text-emerald-700{% elif p.pct_above_50dma >= 40 %}text-amber-700{% else %}text-rose-700{% endif %}">{{ '%.0f'|format(p.pct_above_50dma) }}%</td>
+            <td class="text-right tabular-nums px-4 py-2.5">
+              {% if p.scanner_hits > 0 %}
+                <span class="pill text-[10px] font-bold {% if p.scanner_hits >= 5 %}bg-emerald-100 text-emerald-800 border-emerald-300{% else %}bg-zinc-100 text-zinc-700 border-zinc-200{% endif %}">{{ p.scanner_hits }}</span>
+              {% else %}
+                <span class="text-zinc-300">—</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
+
+  <div class="text-xs text-zinc-500 mt-4">
+    See also: <a href="/sector-rotation" class="link">RRG quadrant chart</a> ·
+    <a href="/scanners" class="link">scanner candidates</a> ·
+    <a href="/breadth" class="link">market breadth</a>
+  </div>
+
+</div>
+{% endblock %}
