@@ -36,6 +36,7 @@ from .routers import (  # noqa: E402
     sizing,
     status as status_router,
     trades,
+    trading as trading_router,
     users as users_router,
     watchlist,
 )
@@ -393,5 +394,6 @@ app.include_router(breadth_router.router, dependencies=_authed)
 app.include_router(sector_rotation_router.router, dependencies=_authed)
 app.include_router(sectors_router.router, dependencies=_authed)
 app.include_router(scanners.router, dependencies=_authed)
+app.include_router(trading_router.router, dependencies=_authed)
 app.include_router(watchlist.router, dependencies=_authed)
 app.include_router(admin_router.router, dependencies=_authed)

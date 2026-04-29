@@ -290,6 +290,9 @@
             <a href="/sectors" class="{{ _link_class }} {% if path == '/sectors' or path.startswith('/sectors/') %}{{ _active_class }}{% endif %}">
               <i data-lucide="layers" class="w-5 h-5"></i>Sectors
             </a>
+            <a href="/trading/kite" class="{{ _link_class }} {% if path.startswith('/trading') %}{{ _active_class }}{% endif %}">
+              <i data-lucide="activity" class="w-5 h-5"></i>Trading engine
+            </a>
             <a href="/scanners/ipos" class="{{ _link_class }} {% if path == '/scanners/ipos' %}{{ _active_class }}{% endif %}">
               <i data-lucide="sparkles" class="w-5 h-5"></i>Recent IPOs
             </a>
@@ -554,6 +557,7 @@
         { label: 'Breadth',           hint: 'NSE adv/dec + market mood',        url: '/breadth',        icon: 'activity',         section: 'Page' },
         { label: 'Sectors',           hint: 'Industry strength heatmap',         url: '/sectors',        icon: 'layers',           section: 'Page' },
         { label: 'Sector Rotation',   hint: 'RRG: which sectors are leading',   url: '/sector-rotation', icon: 'git-compare-arrows', section: 'Page' },
+        { label: 'Trading engine',    hint: 'Kite session, holdings, reconciliation', url: '/trading/kite', icon: 'activity',     section: 'Page' },
         { label: 'Recent IPOs',       hint: 'Listings from the last 4 quarters', url: '/scanners/ipos',   icon: 'sparkles',          section: 'Page' },
         // New scanners
         { label: 'Institutional Buying scan', hint: 'Smart-money accumulation days', url: '/scanners',   icon: 'building-2',        section: 'Scanner' },

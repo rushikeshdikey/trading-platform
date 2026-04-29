@@ -323,6 +323,43 @@ class ScanCache(Base):
     payload: Mapped[str] = mapped_column(Text, nullable=False)
 
 
+class BrokerAudit(Base):
+    """Append-only audit log of every Kite Connect API call we make.
+
+    The trading engine's foundation: when something goes wrong with real
+    money we must be able to reconstruct exactly what request we sent,
+    what came back, and how long it took. No retention — keep forever.
+    Storage cost is trivial relative to the value of being able to answer
+    "why did the SL get modified to X at HH:MM:SS?" months later.
+
+    Indexed on (user_id, created_at) so a per-user timeline query is fast.
+    """
+
+    __tablename__ = "broker_audit"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False, index=True
+    )
+    # Logical endpoint name (e.g. "holdings", "place_gtt", "modify_order").
+    # NOT the URL — we wrap the kiteconnect SDK, not raw HTTP.
+    endpoint: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    # Captured kwargs passed to the SDK method. JSON-encoded.
+    request_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Response from Kite. JSON-encoded. May be None on exception.
+    response_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # HTTP-ish status: 200 on success, the broker's error code otherwise,
+    # or 0 if the call never reached Kite (network/SDK error).
+    status: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # Wall-clock latency in milliseconds.
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # Exception class name + message when the call raised.
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 class ScanHistory(Base):
     """Append-only daily snapshot of scanner output.
 

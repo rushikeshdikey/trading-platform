@@ -1,0 +1,311 @@
+{% extends "base.html" %}
+{% block title %}Kite — Trading Engine · Trading Journal{% endblock %}
+{% block content %}
+<div class="max-w-7xl mx-auto space-y-6">
+
+  <!-- Header -->
+  <div class="flex items-start justify-between flex-wrap gap-3">
+    <div>
+      <h1 class="text-2xl font-semibold tracking-tight">Kite Trading Engine</h1>
+      <p class="text-zinc-500 text-sm mt-1 max-w-3xl">
+        Phase E0: read-only broker mirror.
+        Holdings, positions, GTTs from Kite + reconciliation against journal open trades.
+        <em class="not-italic text-zinc-400">No orders are placed by this page — every call is read-only and audited.</em>
+      </p>
+    </div>
+    <div class="flex items-center gap-2">
+      {% if auth.authed %}
+        <span class="pill bg-emerald-100 text-emerald-800 border-emerald-300 text-xs">Session live</span>
+      {% elif auth.configured %}
+        <a href="/auth/zerodha/login" class="btn btn-primary text-xs">
+          <i data-lucide="log-in"></i>Connect Kite
+        </a>
+      {% else %}
+        <a href="/account" class="btn btn-outline text-xs">
+          <i data-lucide="key"></i>Add Kite credentials
+        </a>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if not auth.configured %}
+    <div class="card p-6 text-sm text-zinc-700">
+      Kite API key + secret aren't set on your account. Add them in <a href="/account" class="link">/account</a> first, then come back here.
+    </div>
+  {% elif not auth.authed %}
+    <div class="card p-6 text-sm text-zinc-700">
+      Kite credentials configured but no active session.
+      Tokens roll daily at ~06:00 IST — you need to log in once a day.
+      Click <strong>Connect Kite</strong> above.
+    </div>
+  {% else %}
+
+    {% if fetch_error %}
+      <div class="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-sm">
+        <strong>Kite read failed:</strong> <span class="font-mono">{{ fetch_error }}</span>
+      </div>
+    {% endif %}
+
+    <!-- Profile + margins strip -->
+    <div class="grid grid-cols-2 md:grid-cols-5 gap-2">
+      <div class="card px-4 py-3">
+        <div class="text-[10px] uppercase tracking-wide text-zinc-500">Kite User</div>
+        <div class="font-semibold text-sm">{{ profile.user_name or '—' }}</div>
+        <div class="text-[11px] text-zinc-400">{{ profile.user_id or '—' }}</div>
+      </div>
+      <div class="card px-4 py-3">
+        <div class="text-[10px] uppercase tracking-wide text-zinc-500">Broker</div>
+        <div class="font-semibold text-sm">{{ profile.broker or 'ZERODHA' }}</div>
+        <div class="text-[11px] text-zinc-400">{{ (profile.exchanges or [])|join(', ') }}</div>
+      </div>
+      <div class="card px-4 py-3">
+        <div class="text-[10px] uppercase tracking-wide text-zinc-500">Cash available</div>
+        <div class="font-bold text-base tabular-nums">₹{{ '{:,.0f}'.format((margins.equity or {}).get('available', {}).get('live_balance', 0) or 0) }}</div>
+      </div>
+      <div class="card px-4 py-3">
+        <div class="text-[10px] uppercase tracking-wide text-zinc-500">Used margin</div>
+        <div class="font-bold text-base tabular-nums">₹{{ '{:,.0f}'.format((margins.equity or {}).get('utilised', {}).get('debits', 0) or 0) }}</div>
+      </div>
+      <div class="card px-4 py-3">
+        <div class="text-[10px] uppercase tracking-wide text-zinc-500">Token expires</div>
+        <div class="font-semibold text-sm">{{ auth.token_expires_at[:16] if auth.token_expires_at else '—' }}</div>
+      </div>
+    </div>
+
+    <!-- Reconciliation summary -->
+    {% set r = reconciliation %}
+    <div class="card p-4 md:p-5">
+      <h2 class="card-title flex items-center gap-2">
+        <i data-lucide="git-compare" class="w-4 h-4"></i>
+        Journal vs Broker reconciliation
+      </h2>
+      <div class="card-description">
+        Cross-check open trades against Kite's holdings + day positions.
+        Discrepancies should be investigated before any automated trading is enabled.
+      </div>
+
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-2 mt-4">
+        <div class="card px-3 py-2 border-l-4 border-emerald-500">
+          <div class="text-[10px] uppercase tracking-wide text-emerald-700">Matched</div>
+          <div class="text-xl font-bold tabular-nums">{{ r.matched|length }}</div>
+          <div class="text-[10px] text-zinc-500">qty agrees both sides</div>
+        </div>
+        <div class="card px-3 py-2 border-l-4 border-amber-500">
+          <div class="text-[10px] uppercase tracking-wide text-amber-700">Mismatched</div>
+          <div class="text-xl font-bold tabular-nums">{{ r.mismatched|length }}</div>
+          <div class="text-[10px] text-zinc-500">qty differs — investigate</div>
+        </div>
+        <div class="card px-3 py-2 border-l-4 border-rose-500">
+          <div class="text-[10px] uppercase tracking-wide text-rose-700">Missing</div>
+          <div class="text-xl font-bold tabular-nums">{{ r.missing|length }}</div>
+          <div class="text-[10px] text-zinc-500">in journal, not broker</div>
+        </div>
+        <div class="card px-3 py-2 border-l-4 border-sky-500">
+          <div class="text-[10px] uppercase tracking-wide text-sky-700">Extra</div>
+          <div class="text-xl font-bold tabular-nums">{{ r.extra|length }}</div>
+          <div class="text-[10px] text-zinc-500">in broker, not journal</div>
+        </div>
+      </div>
+
+      {% if r.mismatched or r.missing or r.extra %}
+      <div class="mt-4 space-y-3">
+        {% if r.mismatched %}
+        <details open class="border border-amber-200 rounded-lg p-3 bg-amber-50/40">
+          <summary class="cursor-pointer font-semibold text-amber-900">
+            Mismatched qty ({{ r.mismatched|length }}) — both have it but different sizes
+          </summary>
+          <table class="w-full text-sm mt-2">
+            <thead class="text-xs uppercase text-zinc-500"><tr><th class="text-left py-1">Symbol</th><th class="text-right py-1">Broker qty</th><th class="text-right py-1">Journal qty</th><th class="text-right py-1">Diff</th></tr></thead>
+            <tbody>
+              {% for m in r.mismatched %}
+              <tr class="border-t border-amber-100">
+                <td class="py-1 font-medium">{{ m.symbol }}
+                  <a href="{{ m.symbol | tv_url }}" target="_blank" rel="noopener" class="ml-1 text-zinc-400 hover:text-zinc-700">
+                    <i data-lucide="line-chart" class="w-3.5 h-3.5 inline-block"></i>
+                  </a>
+                </td>
+                <td class="text-right tabular-nums">{{ m.broker_qty }}</td>
+                <td class="text-right tabular-nums">{{ m.journal_qty }}</td>
+                <td class="text-right tabular-nums {% if m.broker_qty > m.journal_qty %}text-emerald-700{% else %}text-rose-700{% endif %}">{{ '%+d'|format(m.broker_qty - m.journal_qty) }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </details>
+        {% endif %}
+
+        {% if r.missing %}
+        <details class="border border-rose-200 rounded-lg p-3 bg-rose-50/40">
+          <summary class="cursor-pointer font-semibold text-rose-900">
+            Missing from broker ({{ r.missing|length }}) — journal says open but Kite doesn't show
+          </summary>
+          <div class="mt-2 flex flex-wrap gap-1.5">
+            {% for m in r.missing %}
+            <span class="pill text-xs bg-rose-100 text-rose-800 border-rose-200">
+              {{ m.symbol }} ({{ m.journal_qty }})
+              <a href="{{ m.symbol | tv_url }}" target="_blank" rel="noopener" class="ml-1">
+                <i data-lucide="line-chart" class="w-3 h-3 inline-block"></i>
+              </a>
+            </span>
+            {% endfor %}
+          </div>
+        </details>
+        {% endif %}
+
+        {% if r.extra %}
+        <details class="border border-sky-200 rounded-lg p-3 bg-sky-50/40">
+          <summary class="cursor-pointer font-semibold text-sky-900">
+            Extra in broker ({{ r.extra|length }}) — Kite shows positions not in journal
+          </summary>
+          <div class="mt-2 flex flex-wrap gap-1.5">
+            {% for e in r.extra %}
+            <span class="pill text-xs bg-sky-100 text-sky-800 border-sky-200">
+              {{ e.symbol }} ({{ e.broker_qty }})
+              <a href="{{ e.symbol | tv_url }}" target="_blank" rel="noopener" class="ml-1">
+                <i data-lucide="line-chart" class="w-3 h-3 inline-block"></i>
+              </a>
+            </span>
+            {% endfor %}
+          </div>
+        </details>
+        {% endif %}
+      </div>
+      {% else %}
+      <div class="mt-4 text-sm text-emerald-700">✓ Everything reconciles. Journal and broker agree.</div>
+      {% endif %}
+    </div>
+
+    <!-- Holdings table -->
+    <div class="card p-4 md:p-5">
+      <h2 class="card-title">Holdings <span class="text-zinc-500 font-normal">({{ holdings|length }})</span></h2>
+      <div class="card-description">Settled positions from Kite. Refreshes on every page load.</div>
+      {% if not holdings %}
+        <div class="mt-3 text-sm text-zinc-500">No holdings.</div>
+      {% else %}
+      <div class="overflow-x-auto mt-3">
+        <table class="w-full text-sm">
+          <thead class="text-xs uppercase tracking-wide text-zinc-500 border-b border-zinc-200">
+            <tr>
+              <th class="text-left px-2 py-2">Symbol</th>
+              <th class="text-right px-2 py-2">Qty</th>
+              <th class="text-right px-2 py-2">Avg price</th>
+              <th class="text-right px-2 py-2">LTP</th>
+              <th class="text-right px-2 py-2">P&amp;L</th>
+              <th class="text-right px-2 py-2">P&amp;L %</th>
+              <th class="text-left px-2 py-2">Exch</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for h in holdings %}
+            <tr class="border-b border-zinc-100">
+              <td class="px-2 py-2 font-medium whitespace-nowrap">
+                {{ h.tradingsymbol }}
+                <a href="{{ h.tradingsymbol | tv_url }}" target="_blank" rel="noopener"
+                   class="ml-1 text-zinc-400 hover:text-zinc-700" title="Chart">
+                  <i data-lucide="line-chart" class="w-3.5 h-3.5 inline-block"></i>
+                </a>
+              </td>
+              <td class="text-right tabular-nums px-2 py-2">{{ h.quantity }}</td>
+              <td class="text-right tabular-nums px-2 py-2">₹{{ '{:,.2f}'.format(h.average_price or 0) }}</td>
+              <td class="text-right tabular-nums px-2 py-2">₹{{ '{:,.2f}'.format(h.last_price or 0) }}</td>
+              <td class="text-right tabular-nums px-2 py-2 {% if (h.pnl or 0) > 0 %}text-emerald-700{% elif (h.pnl or 0) < 0 %}text-rose-700{% endif %}">
+                ₹{{ '{:,.0f}'.format(h.pnl or 0) }}
+              </td>
+              <td class="text-right tabular-nums px-2 py-2 {% if (h.day_change_percentage or 0) > 0 %}text-emerald-700{% elif (h.day_change_percentage or 0) < 0 %}text-rose-700{% endif %}">
+                {{ '%+.2f'|format(h.day_change_percentage or 0) }}%
+              </td>
+              <td class="text-zinc-500 px-2 py-2 text-xs">{{ h.exchange or '—' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- GTT triggers -->
+    <div class="card p-4 md:p-5">
+      <h2 class="card-title">Active GTT triggers <span class="text-zinc-500 font-normal">({{ gtts|length }})</span></h2>
+      <div class="card-description">Good-Till-Triggered orders sitting at Kite. Phase E1+ will populate this from Auto-Pilot picks.</div>
+      {% if not gtts %}
+        <div class="mt-3 text-sm text-zinc-500">No active GTTs.</div>
+      {% else %}
+      <div class="overflow-x-auto mt-3">
+        <table class="w-full text-sm">
+          <thead class="text-xs uppercase tracking-wide text-zinc-500 border-b border-zinc-200">
+            <tr>
+              <th class="text-left px-2 py-2">Symbol</th>
+              <th class="text-left px-2 py-2">Type</th>
+              <th class="text-right px-2 py-2">Trigger</th>
+              <th class="text-right px-2 py-2">Last price</th>
+              <th class="text-left px-2 py-2">Status</th>
+              <th class="text-left px-2 py-2">Created</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for g in gtts %}
+            {% set cond = g.condition or {} %}
+            <tr class="border-b border-zinc-100">
+              <td class="px-2 py-2 font-medium whitespace-nowrap">
+                {{ cond.tradingsymbol or '—' }}
+                {% if cond.tradingsymbol %}
+                <a href="{{ cond.tradingsymbol | tv_url }}" target="_blank" rel="noopener"
+                   class="ml-1 text-zinc-400 hover:text-zinc-700">
+                  <i data-lucide="line-chart" class="w-3.5 h-3.5 inline-block"></i>
+                </a>
+                {% endif %}
+              </td>
+              <td class="px-2 py-2 text-zinc-600">{{ g.type }}</td>
+              <td class="text-right tabular-nums px-2 py-2">
+                {% set tv = cond.trigger_values or [] %}
+                ₹{{ tv|join(', ₹') if tv else '—' }}
+              </td>
+              <td class="text-right tabular-nums px-2 py-2">₹{{ '{:,.2f}'.format(cond.last_price or 0) }}</td>
+              <td class="px-2 py-2 text-xs">{{ g.status }}</td>
+              <td class="px-2 py-2 text-xs text-zinc-500">{{ g.created_at[:10] if g.created_at else '—' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+    </div>
+
+  {% endif %}
+
+  <!-- Recent audit log -->
+  <div class="card p-4 md:p-5">
+    <h2 class="card-title">Recent broker_audit entries</h2>
+    <div class="card-description">Latest 20 Kite calls. Forever-keep — ask for older ones via SQL.</div>
+    {% if not recent_audit %}
+      <div class="mt-3 text-sm text-zinc-500">No calls yet.</div>
+    {% else %}
+    <div class="overflow-x-auto mt-3">
+      <table class="w-full text-xs">
+        <thead class="text-zinc-500 border-b border-zinc-200">
+          <tr>
+            <th class="text-left px-2 py-1.5">UTC time</th>
+            <th class="text-left px-2 py-1.5">Endpoint</th>
+            <th class="text-right px-2 py-1.5">Status</th>
+            <th class="text-right px-2 py-1.5">Latency</th>
+            <th class="text-left px-2 py-1.5">Error</th>
+          </tr>
+        </thead>
+        <tbody class="font-mono">
+          {% for a in recent_audit %}
+          <tr class="border-b border-zinc-50">
+            <td class="px-2 py-1 whitespace-nowrap">{{ a.created_at.strftime('%m-%d %H:%M:%S') }}</td>
+            <td class="px-2 py-1">{{ a.endpoint }}</td>
+            <td class="text-right tabular-nums px-2 py-1 {% if a.status == 200 %}text-emerald-700{% else %}text-rose-700{% endif %}">{{ a.status }}</td>
+            <td class="text-right tabular-nums px-2 py-1">{{ a.latency_ms }}ms</td>
+            <td class="px-2 py-1 text-rose-700 truncate max-w-md">{{ a.error or '' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </div>
+
+</div>
+{% endblock %}
