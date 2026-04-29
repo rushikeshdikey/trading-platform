@@ -58,13 +58,15 @@
         <div class="font-semibold text-sm">{{ profile.broker or 'ZERODHA' }}</div>
         <div class="text-[11px] text-zinc-400">{{ (profile.exchanges or [])|join(', ') }}</div>
       </div>
+      {# kc.margins("equity") returns the equity dict directly, NOT wrapped
+         in {"equity": ...}. So margins["available"], not margins["equity"]["available"]. #}
       <div class="card px-4 py-3">
         <div class="text-[10px] uppercase tracking-wide text-zinc-500">Cash available</div>
-        <div class="font-bold text-base tabular-nums">₹{{ '{:,.0f}'.format((margins.equity or {}).get('available', {}).get('live_balance', 0) or 0) }}</div>
+        <div class="font-bold text-base tabular-nums">₹{{ '{:,.0f}'.format((margins.get('available') or {}).get('live_balance', 0) or (margins.get('available') or {}).get('cash', 0) or 0) }}</div>
       </div>
       <div class="card px-4 py-3">
         <div class="text-[10px] uppercase tracking-wide text-zinc-500">Used margin</div>
-        <div class="font-bold text-base tabular-nums">₹{{ '{:,.0f}'.format((margins.equity or {}).get('utilised', {}).get('debits', 0) or 0) }}</div>
+        <div class="font-bold text-base tabular-nums">₹{{ '{:,.0f}'.format((margins.get('utilised') or {}).get('debits', 0) or 0) }}</div>
       </div>
       <div class="card px-4 py-3">
         <div class="text-[10px] uppercase tracking-wide text-zinc-500">Token expires</div>
