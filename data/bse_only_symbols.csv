@@ -1,0 +1,15 @@
+symbol
+# ============================================================================
+# BSE-only symbols — stocks that only list on BSE, NOT on NSE.
+#
+# Default for every other symbol is NSE: prefix on TradingView, since the
+# vast majority of liquid Indian swing-tradeable names are dual-listed and
+# NSE is the higher-volume venue. Only BSE-exclusive names need to be here
+# so TradingView resolves the chart correctly.
+#
+# Add a symbol here when you click a chart link and TradingView shows
+# "Symbol not found" — that's the signal it's BSE-exclusive.
+#
+# Format: one symbol per line. Comments start with #.
+# ============================================================================
+
