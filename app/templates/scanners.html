@@ -496,7 +496,7 @@
               <td class="text-right whitespace-nowrap">
                 <a class="btn btn-outline !py-1 !px-2 text-xs"
                    data-action="chart"
-                   href="https://www.tradingview.com/chart/?symbol=NSE:{{ c.symbol }}" target="_blank" rel="noopener" title="Open chart on TradingView (T)">
+                   href="{{ c.symbol | tv_url }}" target="_blank" rel="noopener" title="Open chart on TradingView (T)">
                   <i data-lucide="line-chart"></i>
                 </a>
                 <a class="btn btn-outline !py-1 !px-2 text-xs"
@@ -580,7 +580,7 @@
               <i data-lucide="file-plus"></i>Plan
             </a>
             <a class="btn btn-outline !py-2 !px-3 text-xs"
-               href="https://www.tradingview.com/chart/?symbol=NSE:{{ c.symbol }}"
+               href="{{ c.symbol | tv_url }}"
                target="_blank" rel="noopener" aria-label="Chart">
               <i data-lucide="line-chart"></i>
             </a>
@@ -863,7 +863,7 @@
                 <td class="tabular-nums text-xs"><span class="text-zinc-500">₹{{ '{:,.0f}'.format(s.risk_rs_low) }}</span> / <span class="font-semibold">₹{{ '{:,.0f}'.format(s.risk_rs_high) }}</span></td>
                 <td class="text-right whitespace-nowrap">
                   <a class="btn btn-outline !py-1 !px-2 text-xs"
-                     href="https://www.tradingview.com/chart/?symbol={{ 'NSE' }}:{{ c.symbol }}"
+                     href="{{ c.symbol | tv_url }}"
                      target="_blank" rel="noopener"
                      title="Open chart on TradingView">
                     <i data-lucide="line-chart"></i>

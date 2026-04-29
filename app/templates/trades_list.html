@@ -43,8 +43,13 @@
           <tr class="cursor-pointer" onclick="window.location='/trades/{{ t.id }}'">
             <td class="text-zinc-400">{{ t.trade_no or t.id }}</td>
             <td>{{ t.entry_date | shortdate }}</td>
-            <td class="font-semibold">
+            <td class="font-semibold whitespace-nowrap">
               {{ t.instrument }}
+              <a href="{{ t.instrument | tv_url }}" target="_blank" rel="noopener"
+                 onclick="event.stopPropagation()"
+                 class="ml-1 text-zinc-400 hover:text-zinc-700" title="Chart on TradingView">
+                <i data-lucide="line-chart" class="w-3.5 h-3.5 inline-block"></i>
+              </a>
               {% if t.side == 'S' %}<span class="pill bg-rose-50 text-rose-700 ml-1">Short</span>{% endif %}
             </td>
             <td class="text-zinc-600">{{ t.setup or '—' }}</td>

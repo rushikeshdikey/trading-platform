@@ -80,6 +80,11 @@
           </div>
         </div>
 
+        <a href="{{ p.symbol | tv_url }}" target="_blank" rel="noopener"
+           class="btn btn-outline !py-2 !px-3 text-xs whitespace-nowrap"
+           title="Open chart on TradingView">
+          <i data-lucide="line-chart"></i>
+        </a>
         <a href="/trades/new?instrument={{ p.symbol }}&entry_price={{ p.entry }}&sl={{ p.sl }}&qty={{ p.qty }}&setup=Auto-Pilot+A%2B"
            class="btn btn-primary !py-2 !px-3 text-xs whitespace-nowrap">
           <i data-lucide="file-plus"></i>Plan trade
@@ -231,7 +236,13 @@
               {% for p in state.positions %}
               {% set c = p.card %}
               <tr>
-                <td class="font-semibold"><a href="/trades/{{ c.trade_id }}" class="hover:underline">{{ c.instrument }}</a></td>
+                <td class="font-semibold whitespace-nowrap">
+                  <a href="/trades/{{ c.trade_id }}" class="hover:underline">{{ c.instrument }}</a>
+                  <a href="{{ c.instrument | tv_url }}" target="_blank" rel="noopener"
+                     class="ml-1 text-zinc-400 hover:text-zinc-700" title="Chart on TradingView">
+                    <i data-lucide="line-chart" class="w-3.5 h-3.5 inline-block"></i>
+                  </a>
+                </td>
                 <td class="text-xs text-zinc-500">{{ c.setup or '—' }}</td>
                 <td class="tabular-nums">{{ c.holding_days }}d</td>
                 <td class="tabular-nums">{{ ('₹' ~ '{:,.2f}'.format(c.cmp)) if c.cmp else '—' }}</td>

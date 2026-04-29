@@ -111,7 +111,7 @@
           <i data-lucide="file-plus"></i>Plan
         </a>
         <a class="btn btn-outline !py-2 !px-3 text-xs"
-           href="https://www.tradingview.com/chart/?symbol=NSE:{{ c.symbol }}"
+           href="{{ c.symbol | tv_url }}"
            target="_blank" rel="noopener" aria-label="Open chart">
           <i data-lucide="line-chart"></i>
         </a>

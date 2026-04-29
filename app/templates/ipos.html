@@ -77,7 +77,7 @@
             <td class="tabular-nums text-right text-amber-700">{{ '%+.1f'|format(e.pct_from_high) }}%</td>
             <td class="text-right whitespace-nowrap">
               <a class="btn btn-outline !py-1 !px-2 text-xs"
-                 href="https://www.tradingview.com/chart/?symbol=NSE:{{ e.symbol }}"
+                 href="{{ e.symbol | tv_url }}"
                  target="_blank" rel="noopener">
                 <i data-lucide="line-chart"></i>
               </a>
