@@ -76,6 +76,19 @@ class SectorPoint:
     trail: list[tuple[float, float]] = field(default_factory=list)
     # Latest cumulative return vs market over RS_RATIO_WINDOW
     relative_return_pct: float = 0.0
+    # Multi-timeframe price return on the synthetic sector index. Computed
+    # from the equal-weight constituent series (the same chain of returns
+    # we use for RS); always vs the broad market, not absolute. NaN when
+    # the lookback window doesn't have enough bars.
+    return_1d_pct: float = 0.0
+    return_1w_pct: float = 0.0
+    return_1m_pct: float = 0.0
+    return_3m_pct: float = 0.0
+    # % of constituents trading above their 50-DMA. Read in `compute_sector_strength`.
+    pct_above_50dma: float = 0.0
+    # Number of scanner candidates currently firing in this sector (filled
+    # in by `compute_sector_strength` from ScanCache).
+    scanner_hits: int = 0
 
 
 def _build_sector_series(
@@ -301,6 +314,18 @@ def compute_rotation(db: Session, *, lookback_days: int = LOOKBACK_DAYS) -> list
         else:
             relative_return_pct = 0.0
 
+        # Multi-timeframe sector returns (absolute, not vs market).
+        s_prices = sector_series[sector][:n_dates]
+        ret = lambda lookback: (
+            (s_prices[-1] / s_prices[-1 - lookback] - 1) * 100
+            if len(s_prices) > lookback and s_prices[-1 - lookback] > 0
+            else 0.0
+        )
+        return_1d = ret(1)
+        return_1w = ret(5)
+        return_1m = ret(21)
+        return_3m = ret(63)
+
         out.append(SectorPoint(
             name=sector,
             constituents=len(sector_to_symbols[sector]),
@@ -309,6 +334,10 @@ def compute_rotation(db: Session, *, lookback_days: int = LOOKBACK_DAYS) -> list
             rs_momentum=round(rs_m, 2),
             trail=[(round(a, 2), round(b, 2)) for a, b in trail],
             relative_return_pct=round(relative_return_pct, 2),
+            return_1d_pct=round(return_1d, 2),
+            return_1w_pct=round(return_1w, 2),
+            return_1m_pct=round(return_1m, 2),
+            return_3m_pct=round(return_3m, 2),
         ))
 
     # Order: Leading first (most actionable), then Improving, Weakening, Lagging.
@@ -325,6 +354,72 @@ def latest_anchor_date(db: Session) -> date | None:
     from sqlalchemy import func
     row = db.query(func.max(DailyBar.date)).scalar()
     return row
+
+
+def compute_sector_strength(db: Session, *, lookback_days: int = LOOKBACK_DAYS) -> list[SectorPoint]:
+    """Like compute_rotation, but also fills pct_above_50dma + scanner_hits.
+
+    Used by the /sectors heatmap page. compute_rotation alone is enough for
+    the RRG chart; this wrapper adds the breadth + scanner-firing signals
+    that turn the heatmap into a "what's actionable" view.
+    """
+    from .scanner import index_universe as idx_uni
+    from .scanner import bars_cache, runner as scanner_runner
+
+    points = compute_rotation(db, lookback_days=lookback_days)
+    if not points:
+        return []
+
+    # 1. % above 50-DMA per sector. Reload bars (compute_rotation already did,
+    # but it dropped them); re-using would need a refactor. Cheap enough.
+    ind_map = idx_uni.industry_map()
+    parent_map = {sym: idx_uni.industry_to_sector(ind) for sym, ind in ind_map.items()}
+    # For each SectorPoint name, build the symbol set:
+    sector_symbols: dict[str, list[str]] = defaultdict(list)
+    for sym, ind in ind_map.items():
+        # Match against both the fine industry AND the parent — SectorPoint
+        # names can be either ("Capital Markets" or "Power").
+        sector_symbols[ind].append(sym)
+        sector_symbols[parent_map[sym]].append(sym)
+
+    all_syms = list({s for syms in sector_symbols.values() for s in syms})
+    bars_map = bars_cache.bars_by_symbol(db, all_syms, lookback_days=80)
+
+    def _pct_above_50dma(syms: list[str]) -> float:
+        n_above, n_total = 0, 0
+        for s in syms:
+            bars = bars_map.get(s) or []
+            if len(bars) < 50:
+                continue
+            closes = [b.close for b in bars[-50:]]
+            sma50 = sum(closes) / 50
+            if bars[-1].close > sma50:
+                n_above += 1
+            n_total += 1
+        return (100.0 * n_above / n_total) if n_total > 0 else 0.0
+
+    # 2. Scanner hits per sector — count distinct symbols across all scans.
+    cached = scanner_runner.latest_cached_all(db, max_age_minutes=72 * 60)
+    sector_hits: dict[str, set[str]] = defaultdict(set)
+    if cached is not None:
+        results, _rows = cached
+        for _scan_type, candidates in results.items():
+            for c in candidates:
+                ind = ind_map.get(c.symbol)
+                if not ind:
+                    continue
+                # Add to BOTH the fine industry bucket AND the parent — each
+                # SectorPoint should see its own hits.
+                sector_hits[ind].add(c.symbol)
+                sector_hits[parent_map[c.symbol]].add(c.symbol)
+
+    # 3. Stamp the enrichments onto each SectorPoint.
+    for p in points:
+        syms = sector_symbols.get(p.name, [])
+        p.pct_above_50dma = round(_pct_above_50dma(syms), 1)
+        p.scanner_hits = len(sector_hits.get(p.name, set()))
+
+    return points
 
 
 # ---------------------------------------------------------------------------

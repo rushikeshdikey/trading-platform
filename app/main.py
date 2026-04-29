@@ -31,6 +31,7 @@ from .routers import (  # noqa: E402
     prices as prices_router,
     scanners,
     sector_rotation as sector_rotation_router,
+    sectors as sectors_router,
     settings_routes,
     sizing,
     status as status_router,
@@ -364,6 +365,7 @@ app.include_router(instruments.router, dependencies=_authed)
 app.include_router(insights.router, dependencies=_authed)
 app.include_router(breadth_router.router, dependencies=_authed)
 app.include_router(sector_rotation_router.router, dependencies=_authed)
+app.include_router(sectors_router.router, dependencies=_authed)
 app.include_router(scanners.router, dependencies=_authed)
 app.include_router(watchlist.router, dependencies=_authed)
 app.include_router(admin_router.router, dependencies=_authed)
