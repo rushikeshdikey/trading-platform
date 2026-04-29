@@ -187,12 +187,23 @@ def kite_dashboard(
     reconciliation = _reconcile(holdings, positions["net"], open_trades)
 
     # Recent audit log entries for this user (last 20).
-    from ..models import BrokerAudit
     recent_audit = (
         db.query(BrokerAudit)
         .filter(BrokerAudit.user_id == user.id)
         .order_by(BrokerAudit.created_at.desc())
         .limit(20)
+        .all()
+    )
+
+    # Recent TSL ladder decisions (last 30) — joined with the trade so the
+    # template can show instrument + side + tsl_anchor without N+1.
+    from ..models import TslDecision
+    recent_tsl = (
+        db.query(TslDecision, Trade)
+        .join(Trade, TslDecision.trade_id == Trade.id)
+        .filter(TslDecision.user_id == user.id)
+        .order_by(TslDecision.decided_at.desc())
+        .limit(30)
         .all()
     )
 
@@ -209,6 +220,7 @@ def kite_dashboard(
             "reconciliation": reconciliation,
             "fetch_error": fetch_error,
             "recent_audit": recent_audit,
+            "recent_tsl": recent_tsl,
         },
     )
 
@@ -316,8 +328,36 @@ def submit_gtt(
         )
 
     trigger_id = resp.get("trigger_id") if isinstance(resp, dict) else None
+
+    # Create the Trade row immediately so the TSL daemon has a record to
+    # operate on. Status='open' even though entry hasn't fired yet — the
+    # journal's portfolio metrics are CMP-based and degrade gracefully
+    # (zero P&L until entry hits). Default tsl_anchor='PDL' per the
+    # ladder spec; trader can override per-trade via /trades/<id>/edit.
+    from datetime import date as _date
+    trade = Trade(
+        user_id=user.id,
+        instrument=symbol.upper(),
+        side="B" if transaction_type == "BUY" else "S",
+        entry_date=_date.today(),
+        initial_entry_price=entry_price,
+        initial_qty=qty,
+        sl=stop_price,
+        setup="Auto-Pilot E1",
+        status="open",
+        kite_trigger_id=trigger_id,
+        kite_target_price=target_price,
+        tsl_anchor="PDL",
+    )
+    db.add(trade)
+    db.commit()
+
     return RedirectResponse(
-        url=f"/cockpit?gtt_ok=1&symbol={symbol}&trigger_id={trigger_id or 'unknown'}",
+        url=(
+            f"/cockpit?gtt_ok=1&symbol={symbol}"
+            f"&trigger_id={trigger_id or 'unknown'}"
+            f"&trade_id={trade.id}"
+        ),
         status_code=303,
     )
 

@@ -57,6 +57,18 @@ class Trade(Base):
     status: Mapped[str] = mapped_column(String, default="open", index=True)
     close_date: Mapped[date | None] = mapped_column(Date, nullable=True)
 
+    # Kite-managed trade fields (Phase E1+). Populated when the trade is
+    # placed via /trading/gtt/submit; null for manually-journaled trades.
+    # The TSL daemon only acts on trades where kite_trigger_id is non-null.
+    kite_trigger_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    # Target leg of the OCO, kept fixed across SL ratchets so we only modify
+    # the stop side. Null means we never set one (legacy trades).
+    kite_target_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Anchor used by the TSL ladder for trailing the SL. One of
+    # "PDL" / "5EMA" / "10EMA" / null. Default to PDL on E1 submission;
+    # the trader can override per-trade via /trades/<id>/edit.
+    tsl_anchor: Mapped[str | None] = mapped_column(String, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
@@ -321,6 +333,60 @@ class ScanCache(Base):
     candidates_count: Mapped[int] = mapped_column(Integer, default=0)
     elapsed_ms: Mapped[int] = mapped_column(Integer, default=0)
     payload: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class TslDecision(Base):
+    """Append-only log of every TSL daemon decision.
+
+    The daemon runs once per day after market close. For every open trade
+    with a kite_trigger_id, it computes the current R-multiple, looks up
+    the per-trade anchor (PDL / 5EMA / 10EMA), decides whether to ratchet
+    the SL up, and records the outcome here — even when no action was
+    taken (action='HOLD').
+
+    Why we log no-action decisions too: forensic debugging. If the user
+    asks "why didn't my SL move on day X for ABC?", we can answer it from
+    this table without re-running the calculation.
+
+    Composite unique index on (trade_id, scan_date) prevents the daemon
+    from running twice on the same trade-day even if APScheduler fires
+    twice (boot catchup + 15:50 cron); the second insert errors and the
+    second run gracefully skips.
+    """
+
+    __tablename__ = "tsl_decision"
+    __table_args__ = (
+        Index(
+            "ix_tsl_decision_trade_day",
+            "trade_id", "decision_date",
+            unique=True,
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    trade_id: Mapped[int] = mapped_column(
+        ForeignKey("trades.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    decision_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    decided_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Snapshot of the inputs the decision was made on.
+    cmp: Mapped[float] = mapped_column(Float, nullable=False)
+    current_r: Mapped[float | None] = mapped_column(Float, nullable=True)
+    anchor: Mapped[str | None] = mapped_column(String, nullable=True)
+    anchor_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    current_stop: Mapped[float] = mapped_column(Float, nullable=False)
+    proposed_stop: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    # Outcome.
+    action: Mapped[str] = mapped_column(String, nullable=False, index=True)  # HOLD / MOVED_SL / ERROR
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Kite's response to modify_gtt, JSON-encoded. Null when action != MOVED_SL.
+    modify_response: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class BrokerAudit(Base):

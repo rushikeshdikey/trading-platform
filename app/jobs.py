@@ -135,6 +135,19 @@ def start() -> BackgroundScheduler | None:
         replace_existing=True,
     )
 
+    # TSL ladder — runs 15 minutes AFTER eod_prewarm so the bhavcopy +
+    # scanner cache are fresh. The runner reads today's close from the
+    # bars cache, so it MUST run after eod_prewarm finishes its bars
+    # refresh. 15:50 IST gives the prewarm ~15 min headroom.
+    sched.add_job(
+        _tsl_ladder_run,
+        CronTrigger(day_of_week="mon-fri", hour=15, minute=50, timezone=IST),
+        id="tsl_ladder",
+        max_instances=1,
+        coalesce=True,
+        replace_existing=True,
+    )
+
     # Every-minute health probe — drives the public /status page.
     # Gaps in the recorded rows = "app was down, scheduler couldn't write"
     # = visible downtime on the timeline.
@@ -152,7 +165,8 @@ def start() -> BackgroundScheduler | None:
     sched.start()
     _scheduler = sched
     log.info(
-        "scheduler started: eod_prewarm 15:35 IST mon-fri, health_probe every %ds",
+        "scheduler started: eod_prewarm 15:35 IST, tsl_ladder 15:50 IST mon-fri, "
+        "health_probe every %ds",
         hm.PROBE_INTERVAL_S,
     )
     return sched
@@ -168,3 +182,40 @@ def shutdown() -> None:
 def trigger_prewarm_now() -> None:
     """Manual trigger for testing — runs synchronously in the calling thread."""
     _eod_prewarm()
+
+
+# ---------------------------------------------------------------------------
+# TSL ladder runner — Phase E2.
+# Wrapped in a leader-elected job so multi-worker setups don't double-run.
+# ---------------------------------------------------------------------------
+
+_tsl_lock = threading.Lock()
+
+
+def _tsl_ladder_run() -> None:
+    """Walk every Kite-managed open trade across users, decide ratchet,
+    modify_gtt at Kite for any that cross a ladder rung. Logs to
+    TslDecision (one row per trade per day, idempotent via composite
+    unique index)."""
+    if not _tsl_lock.acquire(blocking=False):
+        log.info("tsl_ladder skipped: another invocation in progress")
+        return
+    try:
+        from .trading_engine import tsl_runner
+        with SessionLocal() as db:
+            t0 = time.perf_counter()
+            summaries = tsl_runner.run_for_all_users(db)
+            elapsed = int((time.perf_counter() - t0) * 1000)
+            log.info(
+                "tsl_ladder done in %dms across %d users: %s",
+                elapsed, len(summaries), summaries,
+            )
+    except Exception:
+        log.exception("tsl_ladder run failed")
+    finally:
+        _tsl_lock.release()
+
+
+def trigger_tsl_now() -> None:
+    """Manual trigger for testing or admin recovery — synchronous."""
+    _tsl_ladder_run()

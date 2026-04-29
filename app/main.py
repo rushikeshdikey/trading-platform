@@ -293,6 +293,51 @@ def _maybe_eod_catchup() -> None:
 _maybe_eod_catchup()
 
 
+def _maybe_tsl_catchup() -> None:
+    """If today is a weekday past 15:50 IST and no TslDecision row exists
+    for today, kick off the ladder pass in a daemon thread.
+
+    Multi-worker safety: each TslDecision row has a composite unique
+    index on (trade_id, decision_date) — if two workers race, the second
+    worker's INSERTs raise IntegrityError per-trade and the runner's
+    idempotence guard skips them cleanly. No daily-lock sentinel needed.
+    """
+    try:
+        from datetime import datetime, time as dtime
+        from .jobs import IST, _tsl_ladder_run
+        from .models import TslDecision
+
+        now_ist = datetime.now(IST)
+        if now_ist.weekday() > 4:
+            return
+        if now_ist.time() < dtime(15, 50):
+            return
+
+        with SessionLocal() as db:
+            already = (
+                db.query(TslDecision)
+                .filter(TslDecision.decision_date == now_ist.date())
+                .first()
+            )
+            if already is not None:
+                return  # Today's run already happened.
+
+        import logging
+        logging.getLogger("journal.bootstrap").info(
+            "tsl_catchup: no TslDecision rows for today — kicking off ladder run"
+        )
+        import threading
+        threading.Thread(target=_tsl_ladder_run, daemon=True).start()
+    except Exception as exc:  # noqa: BLE001
+        import logging
+        logging.getLogger("journal.bootstrap").warning(
+            "tsl_catchup check failed (non-fatal): %s", exc,
+        )
+
+
+_maybe_tsl_catchup()
+
+
 @app.get("/api/status")
 def api_status(user=Depends(require_user)):
     """Lightweight status summary consumed by the global nav strip."""
