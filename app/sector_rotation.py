@@ -274,3 +274,58 @@ def latest_anchor_date(db: Session) -> date | None:
     from sqlalchemy import func
     row = db.query(func.max(DailyBar.date)).scalar()
     return row
+
+
+# ---------------------------------------------------------------------------
+# Symbol → quadrant lookup (used by composite scoring).
+#
+# `compute_rotation` is expensive (loads bars for ~750 symbols, runs Z-score
+# windows). We cache by anchor_date so the lookup is free on subsequent
+# scoring calls within the same trading day.
+# ---------------------------------------------------------------------------
+
+_quadrant_cache: dict | None = None  # {"as_of": date, "map": {symbol: quadrant}}
+
+
+def symbol_quadrant_map(db: Session) -> dict[str, str]:
+    """Return a {symbol → quadrant} dict for use in composite scoring.
+
+    Untagged symbols (not in NSE Total Market) get no entry — caller treats
+    that as "unknown sector, neutral multiplier". Cached for the trading day.
+    """
+    global _quadrant_cache
+    from .scanner import index_universe as idx_uni
+
+    anchor = latest_anchor_date(db)
+    if anchor is None:
+        return {}
+
+    if _quadrant_cache is not None and _quadrant_cache.get("as_of") == anchor:
+        return _quadrant_cache["map"]
+
+    # Recompute. compute_rotation already gives us per-sector quadrants;
+    # we then expand back via industry_map to symbol level.
+    try:
+        rotation = compute_rotation(db)
+        ind_map = idx_uni.industry_map()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("symbol_quadrant_map: rotation failed: %s", exc)
+        return {}
+
+    sector_to_quadrant = {p.name: p.quadrant for p in rotation}
+    out: dict[str, str] = {}
+    for sym, industry in ind_map.items():
+        q = sector_to_quadrant.get(industry)
+        if q:
+            out[sym] = q
+
+    _quadrant_cache = {"as_of": anchor, "map": out}
+    log.info("symbol_quadrant_map: %d tagged symbols across %d sectors",
+             len(out), len(sector_to_quadrant))
+    return out
+
+
+def invalidate_quadrant_cache() -> None:
+    """Drop the cached quadrant lookup (after sector recompute or daily roll)."""
+    global _quadrant_cache
+    _quadrant_cache = None

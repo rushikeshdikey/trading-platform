@@ -322,6 +322,31 @@ class ScanCache(Base):
     payload: Mapped[str] = mapped_column(Text, nullable=False)
 
 
+class ScanHistory(Base):
+    """Append-only daily snapshot of scanner output.
+
+    Why both this AND ScanCache: ScanCache is keyed only by scan_type — one
+    row per scan_type, overwritten on every run. That means we can't replay
+    "what was the universe yesterday?" — a major hole when tuning the
+    composite scoring or auditing why a stock didn't surface.
+
+    ScanHistory writes a fresh row per (scan_date, scan_type), so the full
+    candidate list is preserved. 90-day retention is enforced by a janitor
+    in runner._upsert_scan_cache (cheap, runs once per scan day).
+    """
+
+    __tablename__ = "scan_history"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    scan_date: Mapped[Date] = mapped_column(Date, nullable=False, index=True)
+    scan_type: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    run_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    universe_size: Mapped[int] = mapped_column(Integer, default=0)
+    candidates_count: Mapped[int] = mapped_column(Integer, default=0)
+    elapsed_ms: Mapped[int] = mapped_column(Integer, default=0)
+    payload: Mapped[str] = mapped_column(Text, nullable=False)
+
+
 class InstrumentMeta(Base):
     """Per-symbol fundamentals cache (market cap, TTL-refreshed).
 

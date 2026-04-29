@@ -91,42 +91,12 @@ def scanners_home(request: Request, db: Session = Depends(get_db)):
     )
 
 
-# Conviction tier thresholds. Single source of truth so tuning is one edit.
-_TIER_APLUS_MIN_SCANS = 3
-_TIER_A_SOLO_RS_FLOOR = 70
-_TIER_A_SOLO_SCORE_FLOOR = 60
-_MINERVINI_SCAN_TYPE = "minervini_trend_template"
-
-
-def _compute_tier(scans: list[dict], primary) -> tuple[str, str]:
-    """Decide conviction tier (A+ / A / B) for one symbol's roll-up.
-
-    Rule:
-      A+  — at least 3 scanners agree (rare; multiple independent signals).
-      A   — 2 scanners agree, OR a Minervini Trend Template hit (already an
-            8-criteria Stage 2 filter), OR a single scan with score ≥ 60 AND
-            RS Rating ≥ 70 (a strong-leader solo signal).
-      B   — everything else.
-
-    Returns (tier, reason) where ``reason`` is a short human-readable
-    explanation usable as a tooltip.
-    """
-    n = len(scans)
-    if n >= _TIER_APLUS_MIN_SCANS:
-        return "A+", f"{n} scanners agree"
-    if n >= 2:
-        return "A", f"{n} scanners agree"
-    has_minervini = any(s["type"] == _MINERVINI_SCAN_TYPE for s in scans)
-    if has_minervini:
-        return "A", "Minervini Stage 2 leader"
-    rs = (primary.extras or {}).get("rs_rating")
-    if (
-        primary.score >= _TIER_A_SOLO_SCORE_FLOOR
-        and rs is not None
-        and rs >= _TIER_A_SOLO_RS_FLOOR
-    ):
-        return "A", f"strong solo (score {primary.score:.0f}, RS {rs})"
-    return "B", "single scanner"
+# Tier algorithm has moved to ``app.scanner.scoring`` — composite-score
+# based, replacing the rigid "≥3 scanners = A+" rule. Kept this file's
+# router code thin: gather inputs, call composite_score, render.
+from ..scanner import scoring as scoring_mod
+from .. import breadth as breadth_mod
+from .. import sector_rotation as sector_rotation_mod
 
 
 def _build_unified_results(db: Session) -> dict | None:
@@ -180,11 +150,29 @@ def _build_unified_results(db: Session) -> dict | None:
     # Bulk-build SVG sparklines for every visible symbol in one query.
     sparklines = bulk_sparklines(db, [s for s in grouped.keys()], lookback=30)
 
+    # Composite-scoring inputs — computed ONCE for all rows.
+    # 1. Regime context from the latest "all"-universe breadth row.
+    breadth_row = breadth_mod.latest(db, universe="all")
+    mood = breadth_mod.mood_score(breadth_row) if breadth_row is not None else {"score": None}
+    regime = scoring_mod.regime_multiplier_from_breadth(
+        mood_score=mood.get("score") if mood else None,
+        pct_above_50ema=float(breadth_row.pct_above_50ema) if breadth_row else None,
+        pct_above_200ema=float(breadth_row.pct_above_200ema) if breadth_row else None,
+    )
+    # 2. Symbol → sector quadrant (Leading/Improving/Weakening/Lagging).
+    quadrant_map = sector_rotation_mod.symbol_quadrant_map(db)
+
     out_rows = []
     for sym, slot in grouped.items():
         c = slot["primary"]
         sizing = _size_one(db, c, capital=capital, risk_low=risk_low, risk_high=risk_high)
-        tier, tier_reason = _compute_tier(slot["scans"], c)
+        rs_rating = (c.extras or {}).get("rs_rating") if c.extras else None
+        breakdown = scoring_mod.composite_score(
+            scans=slot["scans"],
+            rs_rating=rs_rating,
+            sector_quadrant=quadrant_map.get(sym),
+            regime=regime,
+        )
         out_rows.append({
             "symbol": sym,
             "scans": sorted(slot["scans"], key=lambda s: s["score"], reverse=True),
@@ -193,10 +181,14 @@ def _build_unified_results(db: Session) -> dict | None:
             "sizing": sizing,
             "on_watchlist": sym in on_watchlist,
             "sparkline": sparklines.get(sym, ""),
-            "tier": tier,
-            "tier_reason": tier_reason,
+            "tier": breakdown.tier,
+            "tier_reason": breakdown.reason,
+            "composite": round(breakdown.composite, 1),
+            "composite_breakdown": breakdown,
+            "sector_quadrant": quadrant_map.get(sym),
         })
-    out_rows.sort(key=lambda r: (r["scan_count"], r["primary"].score), reverse=True)
+    # Sort by composite score desc — the new canonical ranking.
+    out_rows.sort(key=lambda r: r["composite"], reverse=True)
 
     # Meta — pick the oldest run_at across the 4 scans as the "cache age".
     oldest_run_at = min(rows[st].run_at for st in rows)
@@ -212,6 +204,8 @@ def _build_unified_results(db: Session) -> dict | None:
         "risk_low": risk_low,
         "risk_high": risk_high,
         "capital": capital,
+        "regime": regime,
+        "sector_tagged_count": len(quadrant_map),
         "scan_summary": {
             scan_type: {
                 "label": SCAN_TYPES[scan_type][0],

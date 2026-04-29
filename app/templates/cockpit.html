@@ -18,7 +18,10 @@
       <div class="flex items-center gap-2">
         <i data-lucide="rocket" class="w-5 h-5 text-emerald-700"></i>
         <span class="text-[11px] font-bold uppercase tracking-widest text-emerald-700">Auto-Pilot</span>
-        <h2 class="text-lg font-semibold tracking-tight">Today's trades — A+ confluence</h2>
+        <h2 class="text-lg font-semibold tracking-tight">Today's picks — top composite scores</h2>
+        {% if ap.regime_label %}
+          <span class="pill text-[10px] {% if ap.regime_mood and ap.regime_mood >= 60 %}bg-emerald-100 text-emerald-800 border-emerald-300{% elif ap.regime_mood and ap.regime_mood >= 45 %}bg-emerald-50 text-emerald-700 border-emerald-200{% else %}bg-amber-50 text-amber-700 border-amber-200{% endif %}">{{ ap.regime_label }}</span>
+        {% endif %}
       </div>
       <div class="text-xs text-zinc-500 tabular-nums">
         Risk per trade: {{ '%.2f'|format(ap.risk_pct_used * 100) }}%
@@ -41,8 +44,17 @@
               <span class="pill text-[10px] font-bold {% if p.rs_rating >= 90 %}bg-emerald-100 text-emerald-800 border-emerald-300{% elif p.rs_rating >= 80 %}bg-emerald-50 text-emerald-700 border-emerald-200{% else %}bg-zinc-100 text-zinc-700 border-zinc-200{% endif %}">RS {{ p.rs_rating }}</span>
               {% endif %}
               <span class="pill text-[10px] bg-emerald-100 text-emerald-800 border-emerald-300 font-bold">{{ p.tier }}</span>
+              {% if p.composite_score %}
+              <span title="Composite score (0-150 scale)" class="pill text-[10px] bg-zinc-100 text-zinc-700 border-zinc-200 font-bold tabular-nums cursor-help">CS {{ '%.0f'|format(p.composite_score) }}</span>
+              {% endif %}
+              {% if p.sector_quadrant in ('Leading', 'Improving') %}
+              <span title="RRG sector quadrant" class="pill text-[10px] bg-sky-50 text-sky-800 border-sky-200">{{ p.sector_quadrant }} sector</span>
+              {% endif %}
             </div>
             <div class="text-xs text-zinc-500 mt-0.5">{{ p.confluence|join(' · ') }}</div>
+            {% if p.setup_label %}
+            <div class="text-[11px] text-emerald-700 mt-0.5">{{ p.setup_label }}</div>
+            {% endif %}
           </div>
         </div>
 
@@ -82,15 +94,18 @@
     </div>
   </div>
   {% else %}
-  <div class="rounded-xl border-2 border-zinc-200 bg-zinc-50 px-6 py-5">
+  <div class="rounded-xl border-2 {% if ap.regime_blocked %}border-rose-300 bg-gradient-to-br from-rose-50 to-white{% else %}border-zinc-200 bg-zinc-50{% endif %} px-6 py-5">
     <div class="flex items-center gap-3">
-      <div class="inline-flex items-center justify-center w-12 h-12 rounded-full bg-white border border-zinc-200">
-        <i data-lucide="moon" class="w-6 h-6 text-zinc-500"></i>
+      <div class="inline-flex items-center justify-center w-12 h-12 rounded-full bg-white {% if ap.regime_blocked %}border-rose-300{% else %}border-zinc-200{% endif %} border">
+        <i data-lucide="{% if ap.regime_blocked %}shield-alert{% else %}moon{% endif %}" class="w-6 h-6 {% if ap.regime_blocked %}text-rose-600{% else %}text-zinc-500{% endif %}"></i>
       </div>
-      <div>
-        <div class="text-[11px] font-bold uppercase tracking-widest text-zinc-500">Auto-Pilot</div>
+      <div class="flex-1">
+        <div class="text-[11px] font-bold uppercase tracking-widest {% if ap.regime_blocked %}text-rose-700{% else %}text-zinc-500{% endif %}">Auto-Pilot · {% if ap.regime_blocked %}Hard Block{% else %}Stand-down{% endif %}</div>
         <h2 class="text-lg font-semibold tracking-tight">Stay in cash today</h2>
-        <p class="text-sm text-zinc-600 mt-0.5">{{ ap.no_trade_reason or 'No qualifying confluence today.' }}</p>
+        <p class="text-sm text-zinc-700 mt-0.5">{{ ap.no_trade_reason or 'No qualifying composite today.' }}</p>
+        {% if ap.regime_blocked and ap.regime_reason %}
+        <p class="text-xs text-rose-700 mt-1">Triggers: {{ ap.regime_reason }}</p>
+        {% endif %}
       </div>
     </div>
   </div>
