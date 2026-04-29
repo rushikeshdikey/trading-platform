@@ -29,24 +29,36 @@
   {% set err = request.query_params.get('error') %}
   {% set rf = request.query_params.get('refresh_fund') %}
   {% set rf_err = request.query_params.get('refresh_fund_error') %}
-  {% if scan == 'started' %}<div class="p-3 rounded-lg bg-sky-50 border border-sky-200 text-sky-800 text-sm"><strong>Scan started in background.</strong> Running 7 detectors against ~4500 symbols × 252 bars — typically 30-90 sec on prod. Reload the page to see fresh results when the cache updates.</div>
+  {% if scan == 'started' %}<div class="p-3 rounded-lg bg-sky-50 border border-sky-200 text-sky-800 text-sm"><strong>Scan started in background.</strong> Running 7 detectors against ~4600 symbols × 252 bars — about 4-6 minutes on prod (t4g.medium, 2 vCPU). The page will auto-reload every 30 sec while the scan is in progress.</div>
   {% elif scan == 'already_running' %}<div class="p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm"><strong>A scan is already running.</strong> Wait for it to finish before kicking off another.</div>{% endif %}
 
-  {# Live scan-run state — same pattern as the bars-refresh banner. #}
+  {# Live scan-run state — same pattern as the bars-refresh banner.
+     When running=true we add data-scan-running so the JS at page-bottom
+     can poll-reload until it finishes. #}
   {% if scan_run_state and (scan_run_state.running or scan_run_state.last_error) %}
-  <div class="p-3 rounded-lg text-xs flex items-center gap-3 flex-wrap
+  <div {% if scan_run_state.running %}data-scan-running="1"{% endif %}
+       class="p-3 rounded-lg text-xs flex items-center gap-3 flex-wrap
               {% if scan_run_state.running %}bg-sky-50 border border-sky-200 text-sky-800
               {% else %}bg-rose-50 border border-rose-200 text-rose-800{% endif %}">
     {% if scan_run_state.running %}
       <i data-lucide="loader" class="w-4 h-4 animate-spin"></i>
       <strong>Scan in progress.</strong>
-      <span>Started {{ scan_run_state.started_at }} (UTC). Reload the page when done — the candidate counts in the cards below will update.</span>
+      <span>Started {{ scan_run_state.started_at }} (UTC). Page auto-reloads every 30 sec — about 4-6 min total on prod.</span>
     {% else %}
       <i data-lucide="alert-triangle" class="w-4 h-4"></i>
       <strong>Last scan failed:</strong>
       <span class="font-mono">{{ scan_run_state.last_error }}</span>
     {% endif %}
   </div>
+  <script>
+    // Auto-reload only while a scan is genuinely in progress. The banner
+    // disappears server-side when scan_run_state.running flips false, so
+    // the next reload is the last one. data-scan-running is the trigger.
+    (function() {
+      if (!document.querySelector('[data-scan-running="1"]')) return;
+      setTimeout(() => { window.location.href = '/scanners'; }, 30000);
+    })();
+  </script>
   {% endif %}
   {% if refresh == 'started' %}
     {% if cache.rows and cache.rows > 200000 %}
@@ -65,14 +77,15 @@
      (almost always because deploys keep restarting the app container
      and killing the in-flight refresh thread). #}
   {% if bars_refresh_state and (bars_refresh_state.running or bars_refresh_state.last_summary or bars_refresh_state.last_error) %}
-  <div class="p-3 rounded-lg text-xs flex items-center gap-3 flex-wrap
+  <div {% if bars_refresh_state.running %}data-bars-refresh-running="1"{% endif %}
+       class="p-3 rounded-lg text-xs flex items-center gap-3 flex-wrap
               {% if bars_refresh_state.running %}bg-sky-50 border border-sky-200 text-sky-800
               {% elif bars_refresh_state.last_error %}bg-rose-50 border border-rose-200 text-rose-800
               {% else %}bg-zinc-50 border border-zinc-200 text-zinc-700{% endif %}">
     {% if bars_refresh_state.running %}
       <i data-lucide="loader" class="w-4 h-4 animate-spin"></i>
       <strong>Bars refresh in progress.</strong>
-      <span>Started {{ bars_refresh_state.started_at }} (UTC). The Bars count above ticks up live as days commit.</span>
+      <span>Started {{ bars_refresh_state.started_at }} (UTC). Page auto-reloads every 15 sec — usually 5-30 sec total on a warm cache.</span>
     {% elif bars_refresh_state.last_error %}
       <i data-lucide="alert-triangle" class="w-4 h-4"></i>
       <strong>Last bars refresh failed:</strong>
@@ -85,6 +98,11 @@
       <span>+{{ s.rows_upserted }} rows · {{ s.days_downloaded }} days downloaded · {{ s.days_skipped_existing }} skipped (already cached) · {{ s.days_failed }} failed · finished {{ bars_refresh_state.finished_at }} UTC</span>
     {% endif %}
   </div>
+  <script>
+    if (document.querySelector('[data-bars-refresh-running="1"]')) {
+      setTimeout(() => { window.location.href = '/scanners'; }, 15000);
+    }
+  </script>
   {% endif %}
   {% if rf %}<div class="p-3 rounded-lg bg-sky-50 border border-sky-200 text-sky-800 text-sm"><strong>Market-cap refresh:</strong> {{ rf }} (running in background — reload to see progress)</div>{% endif %}
   {% if rf_err %}<div class="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-sm"><strong>Market-cap refresh error:</strong> {{ rf_err }}</div>{% endif %}
