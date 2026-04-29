@@ -1,7 +1,11 @@
 """HTTP surface for the Daily Trading Cockpit.
 
-- GET /cockpit          → main page (instant — no scanner runs)
-- GET /cockpit/signals  → HTMX partial; runs all 4 scanners + conviction scoring
+- GET /cockpit  → main page (instant — reads scanner cache, never re-runs)
+
+The old /cockpit/signals HTMX partial was removed. Auto-Pilot at the top
+of /cockpit replaces it: same scanner output, ranked via composite
+scoring with sector + regime context. /scanners is the place to browse
+the full ranked list.
 """
 from __future__ import annotations
 
@@ -18,21 +22,9 @@ router = APIRouter(prefix="/cockpit")
 
 @router.get("", response_class=HTMLResponse)
 def cockpit_home(request: Request, db: Session = Depends(get_db)):
-    state = cockpit_svc.build_cockpit(db, include_signals=False)
+    state = cockpit_svc.build_cockpit(db)
     return templates.TemplateResponse(
         request,
         "cockpit.html",
         {"state": state},
-    )
-
-
-@router.get("/signals", response_class=HTMLResponse)
-def cockpit_signals(request: Request, db: Session = Depends(get_db)):
-    """HTMX partial — runs scanners, conviction-scores, returns the signals
-    panel HTML. The main page shows a spinner until this responds."""
-    signals, meta = cockpit_svc.build_signals(db)
-    return templates.TemplateResponse(
-        request,
-        "partials/cockpit_signals.html",
-        {"signals": signals, "meta": meta},
     )

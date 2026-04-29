@@ -303,36 +303,11 @@
         {% endif %}
       </div>
 
-      <!-- Conviction-scored signals (lazy-loaded via HTMX) -->
-      <div class="card">
-        <div class="card-header flex items-center justify-between">
-          <div>
-            <div class="card-title flex items-center gap-2">
-              <i data-lucide="target" class="w-4 h-4 text-zinc-500"></i>
-              Today's signals — conviction-scored
-            </div>
-            <div class="card-description">All 4 scanners × market regime × your personal edge. A+ first.</div>
-          </div>
-          <button class="btn btn-outline !py-1 !px-2 text-xs"
-                  hx-get="/cockpit/signals"
-                  hx-target="#cockpit-signals"
-                  hx-swap="innerHTML"
-                  hx-indicator="#sig-spin">
-            <i data-lucide="refresh-cw"></i>Re-scan
-          </button>
-        </div>
-        <div id="cockpit-signals"
-             hx-get="/cockpit/signals"
-             hx-trigger="load"
-             hx-swap="innerHTML">
-          <div class="p-6 flex items-center gap-3 text-sm text-zinc-500">
-            <span id="sig-spin" class="inline-block">
-              <i data-lucide="loader" class="w-4 h-4 animate-spin"></i>
-            </span>
-            Running all 4 scanners and conviction-scoring against your edge…
-          </div>
-        </div>
-      </div>
+      {# Removed "Today's signals — conviction-scored" panel: superseded by
+         Auto-Pilot at the top of /cockpit, which uses the unified composite
+         scoring (sector + regime + RS + Minervini bonus) and reads from the
+         scanner cache instead of re-running all 7 detectors per page load.
+         The /scanners page is the place to browse the full ranked list. #}
 
     </div>
 
