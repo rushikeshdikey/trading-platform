@@ -402,12 +402,23 @@ def place_gtt_single_buy(
 def place_order_market(
     db: Session, user: User, *,
     symbol: str, qty: int, transaction_type: str,
+    market_protection_pct: float = 1.0,
 ) -> dict:
     """Place a regular MARKET order (CNC, REGULAR variety).
 
-    Used by the platform's "Exit at market" flow to close out a position
-    immediately. Returns Kite's response dict; the broker's order id is
-    in response["order_id"].
+    Kite Connect rejects naked MARKET orders via API ("Market orders
+    without market protection are not allowed"). The fix is the
+    ``market_protection`` parameter — a percentage slippage band that
+    converts the market order into a LIMIT-with-bands internally. 1%
+    is wide enough to fill even on volatile days for liquid Indian
+    cash-equity names.
+
+    Used by:
+      - "Buy now" entry mode in /trading/gtt/submit (immediate BUY)
+      - "Exit at market" button on /positions (immediate SELL)
+
+    Returns Kite's response dict; the broker's order id is in
+    ``response["order_id"]``.
     """
     from .. import kite as kite_mod
 
@@ -433,6 +444,7 @@ def place_order_market(
             quantity=qty,
             order_type=kc.client.ORDER_TYPE_MARKET,
             product=kc.client.PRODUCT_CNC,
+            market_protection=market_protection_pct,
         )
 
 
