@@ -83,6 +83,15 @@ def _eod_prewarm() -> None:
             except Exception:
                 log.exception("eod_prewarm: bars refresh failed (continuing to scan)")
 
+            # 1b. Pull Nifty index OHLCV (^NSEI) — separate from bhavcopy,
+            # used by the distribution-day counter. Cheap one-shot yfinance call.
+            try:
+                from .scanner import nifty_index as ni
+                ni_summary = ni.fetch_and_store(db, lookback_days=60)
+                log.info("eod_prewarm nifty_index: %s", ni_summary)
+            except Exception:
+                log.exception("eod_prewarm: nifty_index fetch failed (continuing)")
+
             # 2. Run all 4 scanners against the (now-fresh) bars cache.
             #    persist=False because we have no user — write directly to
             #    the SHARED ScanCache (no ScanRun history row).

@@ -221,6 +221,19 @@ def build_edge_panel(db: Session, min_trades: int = 3) -> list[analytics.SetupSt
 
 
 @dataclass
+class PendingExit:
+    """One trade with EXIT_RECOMMENDED in the most-recent TSL decision."""
+    trade_id: int
+    instrument: str
+    decided_at: object  # datetime
+    cmp: float
+    current_r: float | None
+    anchor: str | None
+    anchor_value: float | None
+    reason: str
+
+
+@dataclass
 class CockpitState:
     market: MarketVerdict
     positions: list[PositionAction]
@@ -229,6 +242,64 @@ class CockpitState:
     edge: list[analytics.SetupStats]
     # Auto-Pilot — top prescriptive picks for today. The headline panel.
     auto_pilot: object = None  # AutoPilotState; loose-typed to avoid circular import
+    # Pending exit recommendations (EXIT_RECOMMENDED rows from TSL daemon
+    # that the trader hasn't acted on yet). Drives a red banner.
+    pending_exits: list[PendingExit] = None  # type: ignore
+
+
+def _pending_exits(db: Session) -> list[PendingExit]:
+    """Find every Kite-managed open trade whose MOST RECENT TSL decision
+    is EXIT_RECOMMENDED. We compare the latest decision per trade — if the
+    trader closed the position OR the next day's run produced a HOLD/MOVED,
+    the recommendation no longer pends.
+    """
+    from sqlalchemy import func
+    from .models import Trade, TslDecision
+
+    open_trades = (
+        db.query(Trade)
+        .filter(Trade.status == "open")
+        .filter(Trade.kite_trigger_id.isnot(None))
+        .all()
+    )
+    if not open_trades:
+        return []
+    trade_ids = [t.id for t in open_trades]
+
+    # For each trade, fetch its most-recent TslDecision.
+    subq = (
+        db.query(
+            TslDecision.trade_id,
+            func.max(TslDecision.decided_at).label("max_at"),
+        )
+        .filter(TslDecision.trade_id.in_(trade_ids))
+        .group_by(TslDecision.trade_id)
+        .subquery()
+    )
+    latest = (
+        db.query(TslDecision)
+        .join(
+            subq,
+            (TslDecision.trade_id == subq.c.trade_id)
+            & (TslDecision.decided_at == subq.c.max_at),
+        )
+        .all()
+    )
+    by_id = {t.id: t for t in open_trades}
+    out: list[PendingExit] = []
+    for d in latest:
+        if d.action != "EXIT_RECOMMENDED":
+            continue
+        t = by_id.get(d.trade_id)
+        if t is None:
+            continue
+        out.append(PendingExit(
+            trade_id=t.id, instrument=t.instrument,
+            decided_at=d.decided_at, cmp=d.cmp,
+            current_r=d.current_r, anchor=d.anchor,
+            anchor_value=d.anchor_value, reason=d.reason or "",
+        ))
+    return out
 
 
 def build_cockpit(db: Session) -> CockpitState:
@@ -237,6 +308,7 @@ def build_cockpit(db: Session) -> CockpitState:
     risk = build_risk_budget(db)
     cooldown = analytics.consecutive_loss_alert(db, streak_threshold=3)
     edge = build_edge_panel(db)
+    pending_exits = _pending_exits(db)
     from . import auto_pilot as ap_mod
     auto_pilot = ap_mod.build_daily_picks(db)
     # Stamp the market verdict so the panel can render "Stay in cash" loud
@@ -249,4 +321,5 @@ def build_cockpit(db: Session) -> CockpitState:
         cooldown=cooldown,
         edge=edge,
         auto_pilot=auto_pilot,
+        pending_exits=pending_exits,
     )

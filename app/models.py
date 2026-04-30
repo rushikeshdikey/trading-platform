@@ -188,6 +188,30 @@ class ImportedExecution(Base):
     )
 
 
+class NiftyDaily(Base):
+    """Daily OHLCV of the Nifty 50 index (^NSEI on yfinance).
+
+    Used for distribution-day counting (O'Neil's institutional pulse):
+    days where the index closes -0.2% or worse on volume HIGHER than
+    the prior session = institutional selling. >5 distribution days in
+    25 sessions = market topping.
+
+    Stored separately from daily_bars (which is constituent stocks)
+    because the index has no symbol per-se — and yfinance fetches it
+    via a different endpoint anyway.
+    """
+
+    __tablename__ = "nifty_daily"
+
+    date: Mapped[date] = mapped_column(Date, primary_key=True)
+    open: Mapped[float] = mapped_column(Float, nullable=False)
+    high: Mapped[float] = mapped_column(Float, nullable=False)
+    low: Mapped[float] = mapped_column(Float, nullable=False)
+    close: Mapped[float] = mapped_column(Float, nullable=False)
+    volume: Mapped[int] = mapped_column(BigInteger, default=0)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class HealthCheck(Base):
     """One row per scheduled internal /health probe.
 

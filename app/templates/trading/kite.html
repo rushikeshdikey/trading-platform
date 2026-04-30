@@ -305,7 +305,7 @@
         </thead>
         <tbody>
           {% for d, t in recent_tsl %}
-          <tr class="border-b border-zinc-50">
+          <tr class="border-b border-zinc-50 {% if d.action == 'EXIT_RECOMMENDED' %}bg-rose-50/60{% elif d.action == 'MOVED_SL' %}bg-emerald-50/30{% endif %}">
             <td class="px-2 py-1 whitespace-nowrap font-mono">{{ d.decision_date.isoformat() }}</td>
             <td class="px-2 py-1 font-medium whitespace-nowrap">
               <a href="/trades/{{ t.id }}" class="hover:underline">{{ t.instrument }}</a>
@@ -328,6 +328,8 @@
             <td class="px-2 py-1">
               {% if d.action == 'MOVED_SL' %}
                 <span class="pill text-[10px] bg-emerald-100 text-emerald-800 border-emerald-300 font-bold">MOVED</span>
+              {% elif d.action == 'EXIT_RECOMMENDED' %}
+                <span class="pill text-[10px] bg-rose-100 text-rose-800 border-rose-300 font-bold">EXIT REC</span>
               {% elif d.action == 'ERROR' %}
                 <span class="pill text-[10px] bg-rose-100 text-rose-800 border-rose-300 font-bold">ERROR</span>
               {% else %}

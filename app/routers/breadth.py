@@ -46,6 +46,16 @@ def breadth_page(
         sentiment_label, sentiment_class = breadth.sentiment_label(
             latest.pct_above_200ema, latest.pct_above_50ema
         )
+
+    # Distribution-day count (O'Neil's institutional-pulse signal). Read
+    # from the nifty_daily table — separate fetcher in nifty_index.py
+    # populates it during the EOD prewarm. Empty dict if no Nifty bars yet.
+    from ..scanner import nifty_index as ni_mod
+    try:
+        distribution = ni_mod.count_distribution_days(db)
+    except Exception:  # noqa: BLE001
+        distribution = {}
+
     return templates.TemplateResponse(
         request,
         "breadth.html",
@@ -62,6 +72,7 @@ def breadth_page(
             "sentiment_class": sentiment_class,
             "range_options": list(RANGE_DAYS.keys()),
             "universe_size": len(breadth.universe_symbols(segment)),
+            "distribution": distribution,
         },
     )
 

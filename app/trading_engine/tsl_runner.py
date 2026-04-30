@@ -115,6 +115,23 @@ class TradeDecision:
     reason: str
 
 
+def _raw_anchor_value(anchor: str, bars: list) -> float | None:
+    """Like _compute_anchor_value but WITHOUT the buffer — used for the
+    anchor-break check. We compare close vs the actual anchor (PDL,
+    10EMA, 5EMA), not the buffered trail target."""
+    if not bars:
+        return None
+    if anchor == "PDL":
+        return float(bars[-1].low)
+    if anchor == "10EMA":
+        closes = [float(b.close) for b in bars[-30:]]
+        return _ema(closes, 10)
+    if anchor == "5EMA":
+        closes = [float(b.close) for b in bars[-15:]]
+        return _ema(closes, 5)
+    return None
+
+
 def decide(trade: Trade, bars: list, *, today: date | None = None) -> TradeDecision:
     """Compute the ladder decision for a single trade against the latest bars.
 
@@ -123,6 +140,14 @@ def decide(trade: Trade, bars: list, *, today: date | None = None) -> TradeDecis
 
     bars: list of DailyBar-shaped rows with .high/.low/.close, ascending.
           The newest bar is "today's close" — the EOD reference price.
+
+    Three possible actions:
+      HOLD              — no ratchet AND anchor not broken. Most days.
+      MOVED_SL          — ratchet SL up (broker.modify_gtt called by caller).
+      EXIT_RECOMMENDED  — EOD close < anchor. Caller does NOT cancel the GTT
+                          (broker SL still protects); just surfaces a red
+                          banner so the trader exits manually at next open.
+                          Graduates to auto-exit once trust is established.
     """
     if not bars:
         return TradeDecision(
@@ -157,6 +182,44 @@ def decide(trade: Trade, bars: list, *, today: date | None = None) -> TradeDecis
 
     anchor = trade.tsl_anchor or "PDL"
     anchor_value = _compute_anchor_value(anchor, bars)
+    raw_anchor = _raw_anchor_value(anchor, bars)
+
+    # ----------------------------------------------------------------------
+    # Anchor-break check — runs FIRST, takes precedence over ratchet.
+    #
+    # Definition: EOD close < raw anchor (no buffer). For PDL anchor, we
+    # use today's bar's low as the anchor reference (i.e., did today's
+    # close print below today's own low? trivially never true — so for
+    # PDL we look at the prior bar's low instead, which IS the "previous
+    # day low" by name).
+    #
+    # Only fires when R > -0.5 — if the trade is already deeply underwater,
+    # the original SL would have fired and we'd not be in this code path.
+    # The R>-0.5 guard avoids redundant exit signals on positions about to
+    # be auto-stopped anyway.
+    # ----------------------------------------------------------------------
+    break_value = None
+    if anchor == "PDL" and len(bars) >= 2:
+        # Use bar[-2].low (the actual "previous day low") for the break check.
+        break_value = float(bars[-2].low)
+    elif anchor in ("5EMA", "10EMA"):
+        break_value = raw_anchor
+
+    if break_value is not None and current_r > -0.5:
+        broken = cmp < break_value if sign > 0 else cmp > break_value
+        if broken:
+            return TradeDecision(
+                action="EXIT_RECOMMENDED", cmp=cmp, current_r=current_r,
+                anchor=anchor, anchor_value=break_value,
+                current_stop=current_stop, proposed_stop=None,
+                reason=(
+                    f"EOD close ₹{cmp:.2f} broke {anchor} "
+                    f"@ ₹{break_value:.2f} (R={current_r:+.2f}). "
+                    f"Recommendation: exit at next session open. "
+                    f"GTT remains active — broker SL ₹{current_stop:.2f} "
+                    f"still protects against further drawdown."
+                ),
+            )
 
     # Below +1R: do nothing. The original SL is doing its job.
     if current_r < 1.0:
@@ -252,7 +315,8 @@ def run_for_user(db: Session, user: User, *, today: date | None = None) -> dict:
     )
 
     summary = {
-        "evaluated": 0, "moved": 0, "held": 0, "errored": 0, "skipped": [],
+        "evaluated": 0, "moved": 0, "held": 0, "errored": 0,
+        "exit_recommended": 0, "skipped": [],
         "user_id": user.id, "date": today.isoformat(),
     }
 
@@ -284,6 +348,20 @@ def run_for_user(db: Session, user: User, *, today: date | None = None) -> dict:
             proposed_stop=decision.proposed_stop,
             action=decision.action, reason=decision.reason,
         )
+
+        if decision.action == "EXIT_RECOMMENDED":
+            # No Kite call — broker SL still protects. We just log + alert.
+            # Per Path A (notification-only): trader sees red banner on
+            # /cockpit + EXIT_RECOMMENDED row on /trading/kite, exits manually
+            # at next session open. Path C (auto-exit) is a future graduation.
+            db.add(row)
+            db.commit()
+            summary["exit_recommended"] += 1
+            log.info(
+                "tsl exit recommended for %s: %s",
+                trade.instrument, decision.reason,
+            )
+            continue
 
         if decision.action != "MOVED_SL":
             db.add(row)
