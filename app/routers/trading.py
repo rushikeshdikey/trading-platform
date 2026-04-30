@@ -287,10 +287,14 @@ def submit_gtt(
       4. Reconciliation matched-or-extra count (we refuse to place new
          orders if the prior state has unresolved discrepancies > N)
     """
+    # Manual submissions (from /trading/kite) round-trip back there;
+    # Auto-Pilot picks (from /cockpit) round-trip to cockpit.
+    return_path = "/trading/kite" if auto_pilot_rank == "manual" else "/cockpit"
+
     auth = kite_mod.auth_status(user)
     if not auth["authed"]:
         return RedirectResponse(
-            url="/trading/kite?gtt_err=not_authed", status_code=303,
+            url=f"{return_path}?gtt_err=not_authed", status_code=303,
         )
 
     # Daily-cap check (server-side, hard).
@@ -302,7 +306,7 @@ def submit_gtt(
     if today_risk + proposed_risk > cap_rs:
         return RedirectResponse(
             url=(
-                f"/cockpit?gtt_err=daily_cap_exceeded"
+                f"{return_path}?gtt_err=daily_cap_exceeded"
                 f"&cap=₹{int(cap_rs)}"
                 f"&already=₹{int(today_risk)}"
                 f"&proposed=₹{int(proposed_risk)}"
@@ -323,7 +327,7 @@ def submit_gtt(
         log.exception("place_gtt failed")
         from urllib.parse import quote
         return RedirectResponse(
-            url=f"/cockpit?gtt_err={quote(str(exc))[:200]}",
+            url=f"{return_path}?gtt_err={quote(str(exc))[:200]}",
             status_code=303,
         )
 
@@ -354,7 +358,7 @@ def submit_gtt(
 
     return RedirectResponse(
         url=(
-            f"/cockpit?gtt_ok=1&symbol={symbol}"
+            f"{return_path}?gtt_ok=1&symbol={symbol}"
             f"&trigger_id={trigger_id or 'unknown'}"
             f"&trade_id={trade.id}"
         ),
@@ -383,3 +387,92 @@ def cancel_gtt(
             status_code=303,
         )
     return RedirectResponse(url="/trading/kite?gtt_cancelled=1", status_code=303)
+
+
+@router.post("/exit/{trade_id}")
+def exit_at_market(
+    trade_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(auth_mod.require_user),
+    qty: int = Form(...),
+):
+    """Place a MARKET order at Kite to flatten ``qty`` of an open position
+    and write the corresponding journal Exit row.
+
+    Only acts on Kite-managed trades (``kite_trigger_id`` non-null) — manual
+    journal trades have no broker leg to close. If this exits the trade
+    fully, also cancels the residual GTT (the SL+target legs) so it
+    doesn't fire on a phantom position later.
+    """
+    from .. import calculations as calc
+    from ..models import Exit
+    from datetime import date as _date
+
+    auth = kite_mod.auth_status(user)
+    if not auth["authed"]:
+        return RedirectResponse(url="/positions?exit_err=not_authed", status_code=303)
+
+    trade = db.get(Trade, trade_id)
+    if trade is None or trade.user_id != user.id:
+        raise HTTPException(404)
+    if trade.kite_trigger_id is None:
+        return RedirectResponse(
+            url=f"/positions?exit_err=not_kite_managed&trade_id={trade_id}",
+            status_code=303,
+        )
+
+    remaining = calc.open_qty(trade)
+    if qty <= 0 or qty > remaining:
+        return RedirectResponse(
+            url=f"/positions?exit_err=bad_qty&want={qty}&open={remaining}",
+            status_code=303,
+        )
+
+    sell_side = "SELL" if trade.side == "B" else "BUY"
+    try:
+        resp = kite_audited.place_order_market(
+            db, user,
+            symbol=trade.instrument, qty=qty,
+            transaction_type=sell_side,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.exception("exit_at_market place_order failed")
+        from urllib.parse import quote
+        return RedirectResponse(
+            url=f"/positions?exit_err={quote(str(exc))[:200]}&trade_id={trade_id}",
+            status_code=303,
+        )
+
+    order_id = resp.get("order_id") if isinstance(resp, dict) else None
+
+    # Journal Exit row. We don't know the actual fill price yet — MARKET
+    # orders fill near LTP but we can't ask Kite for `ltp()` (your app
+    # lacks the Quote subscription). Use the trade's current cmp as a
+    # reasonable placeholder; user can edit the row after the fact.
+    fill_price = trade.cmp or trade.initial_entry_price
+    seq = (max((e.sequence for e in trade.exits), default=0) + 1) if trade.exits else 1
+    trade.exits.append(Exit(
+        sequence=seq, price=fill_price, qty=qty, date=_date.today(),
+    ))
+
+    fully_exited = (calc.open_qty(trade) == 0)
+    if fully_exited:
+        # Cancel residual GTT — without this the SL/target legs fire later
+        # on a position that no longer exists at the broker.
+        try:
+            kite_audited.cancel_gtt(db, user, trade.kite_trigger_id)
+        except Exception:  # noqa: BLE001
+            log.exception("exit_at_market: cancel_gtt failed (continuing)")
+        trade.kite_trigger_id = None
+        trade.status = "closed"
+        trade.close_date = _date.today()
+
+    db.commit()
+
+    return RedirectResponse(
+        url=(
+            f"/positions?exit_ok=1&trade_id={trade_id}&qty={qty}"
+            f"&order_id={order_id or 'unknown'}"
+        ),
+        status_code=303,
+    )

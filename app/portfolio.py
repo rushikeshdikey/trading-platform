@@ -47,6 +47,7 @@ class PositionCard:
     risk_rs: float             # ₹ at risk from CMP to effective_stop (≥ 0)
     locked_profit_rs: float    # guaranteed ₹ if effective_stop hits (≥ 0, else 0)
     status_tag: str            # "Safe" / "Break-even" / "At risk" / "No CMP"
+    kite_trigger_id: int | None  # non-null = Kite-managed; enables Exit-at-market button
 
 
 @dataclass
@@ -178,6 +179,7 @@ def build(db: Session) -> Summary:
             risk_rs=at_risk,
             locked_profit_rs=lp,
             status_tag=_status_tag(t, cmp, stop),
+            kite_trigger_id=t.kite_trigger_id,
         ))
 
     return Summary(

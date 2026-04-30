@@ -4,6 +4,22 @@
 {% set s = summary %}
 <div class="max-w-7xl mx-auto space-y-5" x-data="positionsPage()" x-init="initCharts()">
 
+  {% if request.query_params.get('exit_ok') %}
+    <div class="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm">
+      <strong>Market exit fired.</strong>
+      Trade #{{ request.query_params.get('trade_id') }} · qty {{ request.query_params.get('qty') }} ·
+      order_id <span class="font-mono">{{ request.query_params.get('order_id') }}</span>.
+      Verify on Zerodha terminal that the SELL filled.
+    </div>
+  {% endif %}
+  {% if request.query_params.get('exit_err') %}
+    <div class="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-sm">
+      <strong>Market exit failed:</strong>
+      <span class="font-mono">{{ request.query_params.get('exit_err') }}</span>
+      {% if request.query_params.get('want') %} · want {{ request.query_params.get('want') }} · open {{ request.query_params.get('open') }}{% endif %}
+    </div>
+  {% endif %}
+
   <!-- Header -->
   <div class="flex items-start justify-between flex-wrap gap-3">
     <div>
@@ -161,6 +177,20 @@
               <div class="font-semibold">₹{{ '{:,.0f}'.format(c.risk_rs) }}</div>
             </div>
           </div>
+
+          {% if c.kite_trigger_id %}
+          {% set exit_side = 'SELL' if c.side == 'B' else 'BUY' %}
+          <!-- Kite-managed: exit-at-market form (only on cards backed by a real broker leg) -->
+          <form method="post" action="/trading/exit/{{ c.trade_id }}" class="mt-2 flex items-center gap-1"
+                onsubmit="return confirm('Exit at MARKET?\n\n{{ c.instrument }}  ·  qty ' + this.qty.value + '\nside: {{ exit_side }}\n\nThis fires immediately at Kite. If full exit, the residual GTT is also cancelled.');">
+            <input type="number" name="qty" min="1" max="{{ c.open_qty }}"
+                   value="{{ c.open_qty }}" required
+                   class="w-16 px-2 py-1 text-xs border border-zinc-200 rounded tabular-nums" />
+            <button type="submit" class="btn btn-outline text-xs flex-1 border-rose-200 text-rose-700 hover:bg-rose-50">
+              <i data-lucide="zap" class="w-3.5 h-3.5"></i>Exit at market
+            </button>
+          </form>
+          {% endif %}
         </div>
         {% endfor %}
       </div>

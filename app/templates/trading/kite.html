@@ -74,6 +74,78 @@
       </div>
     </div>
 
+    <!-- Manual GTT submission — for stocks NOT on today's Auto-Pilot list.
+         Posts to the same /trading/gtt/submit endpoint with the same daily-cap
+         server-side guard. Use this for ad-hoc theses or live-test smoke runs. -->
+    {% if request.query_params.get('gtt_ok') %}
+      <div class="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm">
+        <strong>GTT placed.</strong>
+        {{ request.query_params.get('symbol') }} · trigger_id <span class="font-mono">{{ request.query_params.get('trigger_id') }}</span>
+        · journal trade #{{ request.query_params.get('trade_id') }}.
+      </div>
+    {% endif %}
+    {% if request.query_params.get('gtt_err') %}
+      <div class="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-sm">
+        <strong>GTT submission failed:</strong>
+        <span class="font-mono">{{ request.query_params.get('gtt_err') }}</span>
+      </div>
+    {% endif %}
+    {% if request.query_params.get('gtt_cancelled') %}
+      <div class="p-3 rounded-lg bg-zinc-50 border border-zinc-200 text-zinc-700 text-sm">GTT cancelled.</div>
+    {% endif %}
+
+    <div class="card p-4 md:p-5">
+      <h2 class="card-title flex items-center gap-2">
+        <i data-lucide="zap" class="w-4 h-4"></i>
+        Place GTT manually
+      </h2>
+      <div class="card-description">
+        Submits a GTT-OCO bracket directly. Same server-side daily risk cap as
+        the Cockpit Auto-Pilot button. For BUY: stop &lt; entry &lt; target.
+      </div>
+      <form method="post" action="/trading/gtt/submit"
+            class="grid grid-cols-2 md:grid-cols-7 gap-2 mt-4 text-sm"
+            onsubmit="return confirm('Submit GTT-OCO to Kite?\n\n' + this.symbol.value + '  ·  qty ' + this.qty.value + '\nEntry ₹' + this.entry_price.value + '\nSL ₹' + this.stop_price.value + '\nTarget ₹' + this.target_price.value + '\n\nThis places at Kite. Cancel via the GTT list below.');">
+        <label class="flex flex-col">
+          <span class="text-[10px] uppercase tracking-wide text-zinc-500 mb-0.5">Symbol</span>
+          <input type="text" name="symbol" required maxlength="20"
+                 class="px-2 py-1 border border-zinc-200 rounded uppercase font-mono"
+                 oninput="this.value = this.value.toUpperCase()" />
+        </label>
+        <label class="flex flex-col">
+          <span class="text-[10px] uppercase tracking-wide text-zinc-500 mb-0.5">Qty</span>
+          <input type="number" name="qty" min="1" required
+                 class="px-2 py-1 border border-zinc-200 rounded tabular-nums" />
+        </label>
+        <label class="flex flex-col">
+          <span class="text-[10px] uppercase tracking-wide text-zinc-500 mb-0.5">Entry</span>
+          <input type="number" name="entry_price" step="0.05" min="0.05" required
+                 class="px-2 py-1 border border-zinc-200 rounded tabular-nums" />
+        </label>
+        <label class="flex flex-col">
+          <span class="text-[10px] uppercase tracking-wide text-zinc-500 mb-0.5">SL</span>
+          <input type="number" name="stop_price" step="0.05" min="0.05" required
+                 class="px-2 py-1 border border-zinc-200 rounded tabular-nums" />
+        </label>
+        <label class="flex flex-col">
+          <span class="text-[10px] uppercase tracking-wide text-zinc-500 mb-0.5">Target</span>
+          <input type="number" name="target_price" step="0.05" min="0.05" required
+                 class="px-2 py-1 border border-zinc-200 rounded tabular-nums" />
+        </label>
+        <label class="flex flex-col">
+          <span class="text-[10px] uppercase tracking-wide text-zinc-500 mb-0.5">Side</span>
+          <select name="transaction_type" class="px-2 py-1 border border-zinc-200 rounded">
+            <option value="BUY" selected>BUY</option>
+            <option value="SELL">SELL</option>
+          </select>
+        </label>
+        <input type="hidden" name="auto_pilot_rank" value="manual" />
+        <button type="submit" class="btn btn-primary text-xs self-end">
+          <i data-lucide="zap"></i>Submit GTT
+        </button>
+      </form>
+    </div>
+
     <!-- Reconciliation summary -->
     {% set r = reconciliation %}
     <div class="card p-4 md:p-5">

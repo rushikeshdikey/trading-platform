@@ -313,6 +313,43 @@ def cancel_gtt(db: Session, user: User, trigger_id: int) -> dict:
         return kc.call("delete_gtt", kc.client.delete_gtt, trigger_id=trigger_id)
 
 
+def place_order_market(
+    db: Session, user: User, *,
+    symbol: str, qty: int, transaction_type: str,
+) -> dict:
+    """Place a regular MARKET order (CNC, REGULAR variety).
+
+    Used by the platform's "Exit at market" flow to close out a position
+    immediately. Returns Kite's response dict; the broker's order id is
+    in response["order_id"].
+    """
+    from .. import kite as kite_mod
+
+    if transaction_type not in ("BUY", "SELL"):
+        raise ValueError(f"transaction_type must be BUY or SELL, got {transaction_type}")
+    if qty <= 0:
+        raise ValueError(f"qty must be positive, got {qty}")
+
+    inst = kite_mod._resolve_instrument(db, symbol)
+    if inst is None:
+        raise RuntimeError(f"can't resolve {symbol} to a Kite instrument")
+
+    with session(db, user) as kc:
+        if not kc.is_authed:
+            raise RuntimeError("not authed with Kite")
+        return kc.call(
+            "place_order",
+            kc.client.place_order,
+            variety=kc.client.VARIETY_REGULAR,
+            exchange=inst.exchange,
+            tradingsymbol=inst.tradingsymbol,
+            transaction_type=transaction_type,
+            quantity=qty,
+            order_type=kc.client.ORDER_TYPE_MARKET,
+            product=kc.client.PRODUCT_CNC,
+        )
+
+
 def modify_gtt(
     db: Session, user: User, trigger_id: int, *,
     symbol: str, qty: int,
