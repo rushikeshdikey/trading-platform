@@ -17,7 +17,7 @@ def _card(**overrides):
         open_qty=100, total_qty=100,
         move_pct=0.10, pnl_rs=1000.0, r_multiple=2.0,
         allocation_pct=0.10, invested_rs=10_000, risk_rs=200, locked_profit_rs=0,
-        status_tag="Safe",
+        status_tag="Safe", kite_trigger_id=None,
     )
     base.update(overrides)
     return PositionCard(**base)
