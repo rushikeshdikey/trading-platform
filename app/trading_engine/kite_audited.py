@@ -399,6 +399,17 @@ def place_gtt_single_buy(
         )
 
 
+def _normalise_order_id(resp) -> str | None:
+    """Kite SDK returns place_order's order_id as a bare string in
+    recent versions and as ``{"order_id": "..."}`` in older ones.
+    Normalise both shapes."""
+    if isinstance(resp, str):
+        return resp
+    if isinstance(resp, dict):
+        return resp.get("order_id")
+    return None
+
+
 def place_order_market(
     db: Session, user: User, *,
     symbol: str, qty: int, transaction_type: str,
@@ -406,19 +417,14 @@ def place_order_market(
 ) -> dict:
     """Place a regular MARKET order (CNC, REGULAR variety).
 
-    Kite Connect rejects naked MARKET orders via API ("Market orders
-    without market protection are not allowed"). The fix is the
+    Kite Connect rejects naked MARKET orders via API. The fix is the
     ``market_protection`` parameter — a percentage slippage band that
-    converts the market order into a LIMIT-with-bands internally. 1%
-    is wide enough to fill even on volatile days for liquid Indian
-    cash-equity names.
+    converts the market order into a LIMIT-with-bands internally.
 
-    Used by:
-      - "Buy now" entry mode in /trading/gtt/submit (immediate BUY)
-      - "Exit at market" button on /positions (immediate SELL)
-
-    Returns Kite's response dict; the broker's order id is in
-    ``response["order_id"]``.
+    USE ONLY FOR EXITS. For entries, use ``place_order_limit`` — MARKET
+    fills at LTP ± band, which breaks the R math on tight-SL swing
+    setups (a 0.5% slippage from planned entry can cost you 20-50%
+    of your edge before the trade has begun).
     """
     from .. import kite as kite_mod
 
@@ -434,7 +440,7 @@ def place_order_market(
     with session(db, user) as kc:
         if not kc.is_authed:
             raise RuntimeError("not authed with Kite")
-        return kc.call(
+        resp = kc.call(
             "place_order",
             kc.client.place_order,
             variety=kc.client.VARIETY_REGULAR,
@@ -446,6 +452,54 @@ def place_order_market(
             product=kc.client.PRODUCT_CNC,
             market_protection=market_protection_pct,
         )
+        return {"order_id": _normalise_order_id(resp), "raw": resp}
+
+
+def place_order_limit(
+    db: Session, user: User, *,
+    symbol: str, qty: int, transaction_type: str,
+    limit_price: float,
+) -> dict:
+    """Place a regular LIMIT order at ``limit_price`` (CNC, REGULAR).
+
+    Used for "Buy now" entry mode — preserves the planned R math by
+    refusing to fill above the user's stated entry. If LTP is currently
+    above ``limit_price``, the order sits open until LTP touches the
+    limit (or the trader cancels it).
+
+    Trade-off vs MARKET: predictable fill price, BUT the order may not
+    fill at all if price runs away. For Minervini-style breakouts this
+    is acceptable — better to miss a trade than pay 0.5% above plan.
+    """
+    from .. import kite as kite_mod
+
+    if transaction_type not in ("BUY", "SELL"):
+        raise ValueError(f"transaction_type must be BUY or SELL, got {transaction_type}")
+    if qty <= 0:
+        raise ValueError(f"qty must be positive, got {qty}")
+    if limit_price <= 0:
+        raise ValueError(f"limit_price must be positive, got {limit_price}")
+
+    inst = kite_mod._resolve_instrument(db, symbol)
+    if inst is None:
+        raise RuntimeError(f"can't resolve {symbol} to a Kite instrument")
+
+    with session(db, user) as kc:
+        if not kc.is_authed:
+            raise RuntimeError("not authed with Kite")
+        resp = kc.call(
+            "place_order",
+            kc.client.place_order,
+            variety=kc.client.VARIETY_REGULAR,
+            exchange=inst.exchange,
+            tradingsymbol=inst.tradingsymbol,
+            transaction_type=transaction_type,
+            quantity=qty,
+            order_type=kc.client.ORDER_TYPE_LIMIT,
+            product=kc.client.PRODUCT_CNC,
+            price=limit_price,
+        )
+        return {"order_id": _normalise_order_id(resp), "raw": resp}
 
 
 def modify_gtt(

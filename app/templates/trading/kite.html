@@ -78,10 +78,17 @@
          Posts to the same /trading/gtt/submit endpoint with the same daily-cap
          server-side guard. Use this for ad-hoc theses or live-test smoke runs. -->
     {% if request.query_params.get('gtt_ok') %}
+      {% set tid = request.query_params.get('trigger_id') or request.query_params.get('buy_trigger_id') %}
       <div class="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm">
-        <strong>GTT placed.</strong>
-        {{ request.query_params.get('symbol') }} · trigger_id <span class="font-mono">{{ request.query_params.get('trigger_id') }}</span>
-        · journal trade #{{ request.query_params.get('trade_id') }}.
+        {% if request.query_params.get('pending') %}
+          <strong>BUY trigger placed.</strong>
+          {{ request.query_params.get('symbol') }} · waiting for fill · trigger_id <span class="font-mono">{{ tid }}</span> · journal trade #{{ request.query_params.get('trade_id') }}.
+          <div class="text-[11px] text-emerald-700 mt-1">OCO bracket attaches automatically once the BUY fills (resolved 15:50 IST).</div>
+        {% else %}
+          <strong>GTT placed.</strong>
+          {{ request.query_params.get('symbol') }} · trigger_id <span class="font-mono">{{ tid }}</span> · journal trade #{{ request.query_params.get('trade_id') }}.
+          {% if request.query_params.get('order_id') %}<span class="text-[11px] text-emerald-700">· BUY order_id <span class="font-mono">{{ request.query_params.get('order_id') }}</span></span>{% endif %}
+        {% endif %}
       </div>
     {% endif %}
     {% if request.query_params.get('gtt_err') %}

@@ -343,19 +343,25 @@ def submit_gtt(
     from urllib.parse import quote
 
     if entry_mode == "now":
-        # Path A — fire the entry NOW, then attach the bracket.
+        # Path A — fire a LIMIT entry at the user's stated entry_price, then
+        # attach the bracket. LIMIT (not MARKET) preserves the planned R math:
+        # a 0.5% slippage from planned entry on a tight-SL setup costs 20-50%
+        # of edge before the trade has begun. If LTP is currently above
+        # entry_price for a BUY, the order sits open until LTP touches the
+        # limit — the trader can monitor and cancel if they change their mind.
         try:
-            buy_resp = kite_audited.place_order_market(
+            buy_resp = kite_audited.place_order_limit(
                 db, user,
                 symbol=symbol, qty=qty, transaction_type=transaction_type,
+                limit_price=entry_price,
             )
         except Exception as exc:  # noqa: BLE001
-            log.exception("place_order BUY failed")
+            log.exception("place_order LIMIT BUY failed")
             return RedirectResponse(
                 url=f"{return_path}?gtt_err=buy_failed_{quote(str(exc))[:160]}",
                 status_code=303,
             )
-        buy_order_id = buy_resp.get("order_id") if isinstance(buy_resp, dict) else None
+        buy_order_id = buy_resp.get("order_id")
 
         # Now place the OCO bracket. If it fails the BUY already fired —
         # surface the error but still create the Trade row so the user
