@@ -327,6 +327,30 @@ def cancel_gtt(db: Session, user: User, trigger_id: int) -> dict:
         return kc.call("delete_gtt", kc.client.delete_gtt, trigger_id=trigger_id)
 
 
+def _reference_last_price(db: Session, symbol: str, fallback: float) -> float:
+    """Best-effort 'current' last price for Kite's GTT sanity check.
+
+    Kite's place_gtt requires last_price ≠ trigger_price (their server
+    rejects "Trigger cannot be created with trigger price equal to the
+    last price"). We can't call ``kc.ltp()`` because the user's app lacks
+    the paid Quote subscription, so we reach for the most recent close in
+    our ``daily_bars`` cache. If even that's missing, fall back to the
+    given ``fallback`` ± 0.10 to guarantee inequality.
+    """
+    from ..models import DailyBar
+    bar = (
+        db.query(DailyBar)
+        .filter(DailyBar.symbol == symbol.upper())
+        .order_by(DailyBar.date.desc())
+        .first()
+    )
+    if bar is not None and bar.close and abs(bar.close - fallback) >= 0.05:
+        return float(bar.close)
+    # Worst case: nudge the fallback so it's unequal — direction doesn't
+    # matter for Kite's sanity check; only inequality does.
+    return float(fallback) - 0.10 if fallback > 0.10 else float(fallback) + 0.10
+
+
 def place_gtt_single_buy(
     db: Session, user: User, *,
     symbol: str, qty: int, trigger_price: float,
@@ -358,6 +382,8 @@ def place_gtt_single_buy(
         "price": trigger_price,
     }]
 
+    last_price = _reference_last_price(db, symbol, fallback=trigger_price)
+
     with session(db, user) as kc:
         if not kc.is_authed:
             raise RuntimeError("not authed with Kite")
@@ -368,7 +394,7 @@ def place_gtt_single_buy(
             tradingsymbol=inst.tradingsymbol,
             exchange=inst.exchange,
             trigger_values=[trigger_price],
-            last_price=trigger_price,
+            last_price=last_price,
             orders=orders,
         )
 
