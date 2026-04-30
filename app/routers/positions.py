@@ -145,6 +145,18 @@ def positions_home(
     # Pct-invested headline metric — invested vs total capital ceiling.
     pct_invested = (summary.invested_rs / summary.capital) if summary.capital else 0.0
 
+    # Pending entries (entry_mode='trigger' BUYs that haven't fired yet).
+    # Surfaced as a separate strip — they have no broker position so
+    # they shouldn't pollute the active grid or risk metrics.
+    pending_trades = (
+        db.query(Trade)
+        .filter(Trade.user_id == user.id)
+        .filter(Trade.status == "open")
+        .filter(Trade.entry_status == "pending")
+        .order_by(Trade.entry_date.desc())
+        .all()
+    )
+
     return templates.TemplateResponse(
         request,
         "positions.html",
@@ -157,5 +169,6 @@ def positions_home(
             "closed_cards": closed_cards,
             "closed_stats": closed_stats,
             "closed_chart_json": json.dumps(closed_chart_data),
+            "pending_trades": pending_trades,
         },
     )

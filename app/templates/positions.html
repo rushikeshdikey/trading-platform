@@ -19,6 +19,16 @@
       {% if request.query_params.get('want') %} · want {{ request.query_params.get('want') }} · open {{ request.query_params.get('open') }}{% endif %}
     </div>
   {% endif %}
+  {% if request.query_params.get('cancel_ok') %}
+    <div class="p-3 rounded-lg bg-zinc-50 border border-zinc-200 text-zinc-700 text-sm">
+      Pending entry cancelled — trade #{{ request.query_params.get('trade_id') }}.
+    </div>
+  {% endif %}
+  {% if request.query_params.get('cancel_err') %}
+    <div class="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-sm">
+      <strong>Cancel failed:</strong> <span class="font-mono">{{ request.query_params.get('cancel_err') }}</span>
+    </div>
+  {% endif %}
 
   <!-- Header -->
   <div class="flex items-start justify-between flex-wrap gap-3">
@@ -94,6 +104,60 @@
       All
     </a>
   </div>
+
+  <!-- Pending entries — GTT-single BUY triggers waiting to fill.
+       No broker position yet, so excluded from the Active grid + risk metrics. -->
+  {% if pending_trades %}
+  <div class="card p-4 border-violet-200 bg-violet-50/30">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="text-sm font-semibold tracking-tight text-violet-900 flex items-center gap-2">
+        <i data-lucide="hourglass" class="w-4 h-4"></i>
+        Pending entries ({{ pending_trades|length }})
+      </h2>
+      <div class="text-[11px] text-violet-700/70">BUY trigger waiting · OCO bracket attaches at fill (resolved 15:50 IST)</div>
+    </div>
+    <table class="w-full text-xs">
+      <thead class="text-zinc-500">
+        <tr>
+          <th class="text-left pb-1">Symbol</th>
+          <th class="text-right pb-1">Qty</th>
+          <th class="text-right pb-1">Trigger ₹</th>
+          <th class="text-right pb-1">Planned SL</th>
+          <th class="text-right pb-1">Risk ₹</th>
+          <th class="text-right pb-1">GTT id</th>
+          <th class="text-right pb-1">Submitted</th>
+          <th class="text-right pb-1"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for t in pending_trades %}
+        <tr class="border-t border-violet-100">
+          <td class="py-1.5">
+            <a href="/trades/{{ t.id }}" class="font-semibold hover:underline">{{ t.instrument }}</a>
+            <a href="{{ t.instrument | tv_url }}" target="_blank" rel="noopener" class="text-zinc-400 hover:text-zinc-700 ml-1">
+              <i data-lucide="line-chart" class="w-3 h-3 inline"></i>
+            </a>
+          </td>
+          <td class="text-right tabular-nums">{{ t.initial_qty }}</td>
+          <td class="text-right tabular-nums">₹{{ '{:,.2f}'.format(t.initial_entry_price) }}</td>
+          <td class="text-right tabular-nums text-rose-700">₹{{ '{:,.2f}'.format(t.sl) }}</td>
+          <td class="text-right tabular-nums">₹{{ '{:,.0f}'.format((t.initial_entry_price - t.sl) * t.initial_qty) }}</td>
+          <td class="text-right tabular-nums font-mono text-zinc-500">{{ t.kite_buy_trigger_id or '—' }}</td>
+          <td class="text-right tabular-nums text-zinc-500">{{ t.entry_date.isoformat() }}</td>
+          <td class="text-right">
+            <form method="post" action="/trading/pending/{{ t.id }}/cancel" class="inline"
+                  onsubmit="return confirm('Cancel pending entry?\n\n{{ t.instrument }}  ·  qty {{ t.initial_qty }}  ·  trigger ₹{{ t.initial_entry_price }}\n\nThis cancels the GTT at Kite and removes the trade row from the journal.');">
+              <button type="submit" class="btn btn-outline text-[11px] !py-0.5 !px-2 border-rose-200 text-rose-700 hover:bg-rose-50">
+                Cancel
+              </button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
 
   <!-- Active card grid -->
   {% if tab in ('active', 'all') %}

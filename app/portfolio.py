@@ -103,9 +103,13 @@ def _status_tag(t: Trade, cmp: float | None, stop: float) -> str:
 
 def build(db: Session) -> Summary:
     capital = dash.current_capital(db)
+    # Only filled positions appear on the active card grid. Pending
+    # entries (entry_status='pending') are surfaced separately on
+    # /positions and /trading/kite — they have no broker position yet.
     opens = (
         db.query(Trade)
         .filter(Trade.status == "open")
+        .filter(Trade.entry_status == "filled")
         .order_by(Trade.entry_date.desc())
         .all()
     )

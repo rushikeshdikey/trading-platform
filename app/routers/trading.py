@@ -121,8 +121,20 @@ def _reconcile(holdings: list[dict], net_positions: list[dict],
         broker_qty[sym] = broker_qty.get(sym, 0) + int(p.get("quantity") or 0)
 
     # Journal-side qty per symbol = sum(initial_qty + pyramids) - sum(exits).
+    # Trades with entry_status='pending' are split out separately — they're
+    # *expected* to be missing at the broker (BUY trigger hasn't fired yet).
     journal_qty: dict[str, int] = {}
+    pending: list[dict] = []
     for t in open_trades:
+        if getattr(t, "entry_status", "filled") == "pending":
+            pending.append({
+                "symbol": t.instrument,
+                "qty": t.initial_qty,
+                "trade_id": t.id,
+                "trigger_price": t.initial_entry_price,
+                "buy_trigger_id": t.kite_buy_trigger_id,
+            })
+            continue
         held = t.initial_qty + sum(p.qty for p in t.pyramids)
         held -= sum(e.qty for e in t.exits)
         sym = _canonical(t.instrument)
@@ -147,6 +159,7 @@ def _reconcile(holdings: list[dict], net_positions: list[dict],
         "mismatched": mismatched,
         "missing": missing,
         "extra": extra,
+        "pending": pending,
         "total_broker_symbols": len([s for s in broker_qty if broker_qty[s] > 0]),
         "total_journal_symbols": len([s for s in journal_qty if journal_qty[s] > 0]),
     }
@@ -276,20 +289,31 @@ def submit_gtt(
     stop_price: float = Form(...),
     target_price: float = Form(...),
     transaction_type: str = Form("BUY"),
-    auto_pilot_rank: str = Form(""),  # cosmetic, for the audit comment
+    entry_mode: str = Form("now"),         # 'now' | 'trigger'
+    auto_pilot_rank: str = Form(""),       # cosmetic, for the audit comment
 ):
-    """Phase E1: place a GTT-OCO bracket from a Cockpit Auto-Pilot pick.
+    """Phase E1.1: hybrid entry submission.
 
-    Server-side guards (cannot be bypassed by tampering with the form):
+    ``entry_mode='now'`` (default for Auto-Pilot picks) — place a regular
+    MARKET BUY immediately, then place the GTT-OCO bracket. Entry fills
+    in seconds; bracket sits as the exit.
+
+    ``entry_mode='trigger'`` (planned breakout/pullback entries) — place a
+    GTT-single BUY at ``entry_price``. The OCO bracket is NOT placed here;
+    the TSL daemon (15:50 IST) checks for fills, then places the OCO once
+    a position actually exists at the broker.
+
+    Server-side guards apply uniformly to both paths:
       1. User must be Kite-authed
       2. qty > 0, prices in correct order
       3. Cumulative day risk + this trade's risk ≤ DAILY_RISK_CAP_PCT × capital
-      4. Reconciliation matched-or-extra count (we refuse to place new
-         orders if the prior state has unresolved discrepancies > N)
     """
     # Manual submissions (from /trading/kite) round-trip back there;
     # Auto-Pilot picks (from /cockpit) round-trip to cockpit.
     return_path = "/trading/kite" if auto_pilot_rank == "manual" else "/cockpit"
+
+    if entry_mode not in ("now", "trigger"):
+        entry_mode = "now"
 
     auth = kite_mod.auth_status(user)
     if not auth["authed"]:
@@ -297,7 +321,8 @@ def submit_gtt(
             url=f"{return_path}?gtt_err=not_authed", status_code=303,
         )
 
-    # Daily-cap check (server-side, hard).
+    # Daily-cap check (server-side, hard). Risk is the same regardless of
+    # entry_mode because both paths arrive at the same SL.
     capital = dash_svc.current_capital(db)
     proposed_risk = max(0.0, (entry_price - stop_price) * qty) if transaction_type == "BUY" \
         else max(0.0, (stop_price - entry_price) * qty)
@@ -314,31 +339,89 @@ def submit_gtt(
             status_code=303,
         )
 
+    from datetime import date as _date
+    from urllib.parse import quote
+
+    if entry_mode == "now":
+        # Path A — fire the entry NOW, then attach the bracket.
+        try:
+            buy_resp = kite_audited.place_order_market(
+                db, user,
+                symbol=symbol, qty=qty, transaction_type=transaction_type,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.exception("place_order BUY failed")
+            return RedirectResponse(
+                url=f"{return_path}?gtt_err=buy_failed_{quote(str(exc))[:160]}",
+                status_code=303,
+            )
+        buy_order_id = buy_resp.get("order_id") if isinstance(buy_resp, dict) else None
+
+        # Now place the OCO bracket. If it fails the BUY already fired —
+        # surface the error but still create the Trade row so the user
+        # sees it on /positions and can retry the bracket via UI.
+        oco_trigger_id: int | None = None
+        bracket_err: str | None = None
+        try:
+            oco_resp = kite_audited.place_gtt_oco(
+                db, user,
+                symbol=symbol, qty=qty,
+                entry_price=entry_price,
+                stop_price=stop_price,
+                target_price=target_price,
+                transaction_type=transaction_type,
+            )
+            oco_trigger_id = oco_resp.get("trigger_id") if isinstance(oco_resp, dict) else None
+        except Exception as exc:  # noqa: BLE001
+            log.exception("place_gtt_oco bracket failed (BUY already filled)")
+            bracket_err = f"{type(exc).__name__}: {exc}"
+
+        trade = Trade(
+            user_id=user.id,
+            instrument=symbol.upper(),
+            side="B" if transaction_type == "BUY" else "S",
+            entry_date=_date.today(),
+            initial_entry_price=entry_price,
+            initial_qty=qty,
+            sl=stop_price,
+            setup="Auto-Pilot E1" if auto_pilot_rank != "manual" else "Manual E1",
+            status="open",
+            kite_trigger_id=oco_trigger_id,
+            kite_target_price=target_price,
+            tsl_anchor="PDL",
+            entry_status="filled",
+            kite_buy_order_id=buy_order_id,
+        )
+        db.add(trade)
+        db.commit()
+
+        suffix = ""
+        if bracket_err:
+            suffix = f"&bracket_err={quote(bracket_err)[:160]}"
+        return RedirectResponse(
+            url=(
+                f"{return_path}?gtt_ok=1&symbol={symbol}"
+                f"&trigger_id={oco_trigger_id or 'pending'}"
+                f"&order_id={buy_order_id or 'unknown'}"
+                f"&trade_id={trade.id}{suffix}"
+            ),
+            status_code=303,
+        )
+
+    # Path B — entry_mode == 'trigger'. Place GTT-single BUY only.
     try:
-        resp = kite_audited.place_gtt_oco(
+        gtt_resp = kite_audited.place_gtt_single_buy(
             db, user,
-            symbol=symbol, qty=qty,
-            entry_price=entry_price,
-            stop_price=stop_price,
-            target_price=target_price,
-            transaction_type=transaction_type,
+            symbol=symbol, qty=qty, trigger_price=entry_price,
         )
     except Exception as exc:  # noqa: BLE001
-        log.exception("place_gtt failed")
-        from urllib.parse import quote
+        log.exception("place_gtt_single_buy failed")
         return RedirectResponse(
             url=f"{return_path}?gtt_err={quote(str(exc))[:200]}",
             status_code=303,
         )
+    buy_trigger_id = gtt_resp.get("trigger_id") if isinstance(gtt_resp, dict) else None
 
-    trigger_id = resp.get("trigger_id") if isinstance(resp, dict) else None
-
-    # Create the Trade row immediately so the TSL daemon has a record to
-    # operate on. Status='open' even though entry hasn't fired yet — the
-    # journal's portfolio metrics are CMP-based and degrade gracefully
-    # (zero P&L until entry hits). Default tsl_anchor='PDL' per the
-    # ladder spec; trader can override per-trade via /trades/<id>/edit.
-    from datetime import date as _date
     trade = Trade(
         user_id=user.id,
         instrument=symbol.upper(),
@@ -347,11 +430,13 @@ def submit_gtt(
         initial_entry_price=entry_price,
         initial_qty=qty,
         sl=stop_price,
-        setup="Auto-Pilot E1",
+        setup="Manual E1 (pending)" if auto_pilot_rank == "manual" else "Auto-Pilot E1 (pending)",
         status="open",
-        kite_trigger_id=trigger_id,
         kite_target_price=target_price,
         tsl_anchor="PDL",
+        entry_status="pending",
+        kite_buy_trigger_id=buy_trigger_id,
+        # kite_trigger_id (the OCO) stays null — TSL daemon places it on fill
     )
     db.add(trade)
     db.commit()
@@ -359,7 +444,8 @@ def submit_gtt(
     return RedirectResponse(
         url=(
             f"{return_path}?gtt_ok=1&symbol={symbol}"
-            f"&trigger_id={trigger_id or 'unknown'}"
+            f"&pending=1"
+            f"&buy_trigger_id={buy_trigger_id or 'unknown'}"
             f"&trade_id={trade.id}"
         ),
         status_code=303,
@@ -387,6 +473,49 @@ def cancel_gtt(
             status_code=303,
         )
     return RedirectResponse(url="/trading/kite?gtt_cancelled=1", status_code=303)
+
+
+@router.post("/pending/{trade_id}/cancel")
+def cancel_pending_entry(
+    trade_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(auth_mod.require_user),
+):
+    """Cancel a pending GTT-single BUY trigger and remove the journal row.
+
+    Only acts on Trades with entry_status='pending' AND a non-null
+    kite_buy_trigger_id. The OCO bracket can't exist yet (we defer it
+    until fill), so there's nothing else to clean up at the broker.
+    """
+    auth = kite_mod.auth_status(user)
+    if not auth["authed"]:
+        return RedirectResponse(url="/positions?cancel_err=not_authed", status_code=303)
+
+    trade = db.get(Trade, trade_id)
+    if trade is None or trade.user_id != user.id:
+        raise HTTPException(404)
+    if trade.entry_status != "pending" or trade.kite_buy_trigger_id is None:
+        return RedirectResponse(
+            url=f"/positions?cancel_err=not_pending&trade_id={trade_id}",
+            status_code=303,
+        )
+
+    # Idempotent cancel — Kite returns an error if the trigger is already
+    # gone, but we still want to drop the journal row.
+    try:
+        kite_audited.cancel_gtt(db, user, trade.kite_buy_trigger_id)
+    except Exception:  # noqa: BLE001
+        log.exception("cancel_pending_entry: cancel_gtt failed (continuing)")
+
+    from ..models import Pyramid, Exit
+    db.query(Pyramid).filter(Pyramid.trade_id == trade_id).delete(synchronize_session=False)
+    db.query(Exit).filter(Exit.trade_id == trade_id).delete(synchronize_session=False)
+    db.delete(trade)
+    db.commit()
+
+    return RedirectResponse(
+        url=f"/positions?cancel_ok=1&trade_id={trade_id}", status_code=303,
+    )
 
 
 @router.post("/exit/{trade_id}")

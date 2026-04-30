@@ -167,9 +167,10 @@
           <input type="hidden" name="stop_price" value="{{ p.sl }}">
           <input type="hidden" name="target_price" value="{{ p.target }}">
           <input type="hidden" name="transaction_type" value="BUY">
+          <input type="hidden" name="entry_mode" value="now">
           <input type="hidden" name="auto_pilot_rank" value="{{ p.rank }}">
           <button class="btn !py-2 !px-3 text-xs whitespace-nowrap bg-amber-100 text-amber-900 border border-amber-300 hover:bg-amber-200"
-                  title="Place GTT-OCO bracket on Kite (entry + SL + target)">
+                  title="MARKET BUY now + OCO bracket attached">
             <i data-lucide="zap"></i>Submit GTT
           </button>
         </form>

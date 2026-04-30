@@ -104,45 +104,68 @@
         the Cockpit Auto-Pilot button. For BUY: stop &lt; entry &lt; target.
       </div>
       <form method="post" action="/trading/gtt/submit"
-            class="grid grid-cols-2 md:grid-cols-7 gap-2 mt-4 text-sm"
-            onsubmit="return confirm('Submit GTT-OCO to Kite?\n\n' + this.symbol.value + '  ·  qty ' + this.qty.value + '\nEntry ₹' + this.entry_price.value + '\nSL ₹' + this.stop_price.value + '\nTarget ₹' + this.target_price.value + '\n\nThis places at Kite. Cancel via the GTT list below.');">
-        <label class="flex flex-col">
-          <span class="text-[10px] uppercase tracking-wide text-zinc-500 mb-0.5">Symbol</span>
-          <input type="text" name="symbol" required maxlength="20"
-                 class="px-2 py-1 border border-zinc-200 rounded uppercase font-mono"
-                 oninput="this.value = this.value.toUpperCase()" />
-        </label>
-        <label class="flex flex-col">
-          <span class="text-[10px] uppercase tracking-wide text-zinc-500 mb-0.5">Qty</span>
-          <input type="number" name="qty" min="1" required
-                 class="px-2 py-1 border border-zinc-200 rounded tabular-nums" />
-        </label>
-        <label class="flex flex-col">
-          <span class="text-[10px] uppercase tracking-wide text-zinc-500 mb-0.5">Entry</span>
-          <input type="number" name="entry_price" step="0.05" min="0.05" required
-                 class="px-2 py-1 border border-zinc-200 rounded tabular-nums" />
-        </label>
-        <label class="flex flex-col">
-          <span class="text-[10px] uppercase tracking-wide text-zinc-500 mb-0.5">SL</span>
-          <input type="number" name="stop_price" step="0.05" min="0.05" required
-                 class="px-2 py-1 border border-zinc-200 rounded tabular-nums" />
-        </label>
-        <label class="flex flex-col">
-          <span class="text-[10px] uppercase tracking-wide text-zinc-500 mb-0.5">Target</span>
-          <input type="number" name="target_price" step="0.05" min="0.05" required
-                 class="px-2 py-1 border border-zinc-200 rounded tabular-nums" />
-        </label>
-        <label class="flex flex-col">
-          <span class="text-[10px] uppercase tracking-wide text-zinc-500 mb-0.5">Side</span>
-          <select name="transaction_type" class="px-2 py-1 border border-zinc-200 rounded">
-            <option value="BUY" selected>BUY</option>
-            <option value="SELL">SELL</option>
-          </select>
-        </label>
-        <input type="hidden" name="auto_pilot_rank" value="manual" />
-        <button type="submit" class="btn btn-primary text-xs self-end">
-          <i data-lucide="zap"></i>Submit GTT
-        </button>
+            class="space-y-3 mt-4 text-sm"
+            onsubmit="return confirm('Submit to Kite?\n\n' + this.symbol.value + '  ·  qty ' + this.qty.value + '\nEntry ₹' + this.entry_price.value + '  (' + (this.entry_mode.value === 'now' ? 'BUY now at market' : 'BUY at trigger') + ')\nSL ₹' + this.stop_price.value + '\nTarget ₹' + this.target_price.value + '\n\nThis places live orders. Cancel via the GTT list below.');">
+        <div class="grid grid-cols-2 md:grid-cols-7 gap-2">
+          <label class="flex flex-col">
+            <span class="text-[10px] uppercase tracking-wide text-zinc-500 mb-0.5">Symbol</span>
+            <input type="text" name="symbol" required maxlength="20"
+                   class="px-2 py-1 border border-zinc-200 rounded uppercase font-mono"
+                   oninput="this.value = this.value.toUpperCase()" />
+          </label>
+          <label class="flex flex-col">
+            <span class="text-[10px] uppercase tracking-wide text-zinc-500 mb-0.5">Qty</span>
+            <input type="number" name="qty" min="1" required
+                   class="px-2 py-1 border border-zinc-200 rounded tabular-nums" />
+          </label>
+          <label class="flex flex-col">
+            <span class="text-[10px] uppercase tracking-wide text-zinc-500 mb-0.5">Entry</span>
+            <input type="number" name="entry_price" step="0.05" min="0.05" required
+                   class="px-2 py-1 border border-zinc-200 rounded tabular-nums" />
+          </label>
+          <label class="flex flex-col">
+            <span class="text-[10px] uppercase tracking-wide text-zinc-500 mb-0.5">SL</span>
+            <input type="number" name="stop_price" step="0.05" min="0.05" required
+                   class="px-2 py-1 border border-zinc-200 rounded tabular-nums" />
+          </label>
+          <label class="flex flex-col">
+            <span class="text-[10px] uppercase tracking-wide text-zinc-500 mb-0.5">Target</span>
+            <input type="number" name="target_price" step="0.05" min="0.05" required
+                   class="px-2 py-1 border border-zinc-200 rounded tabular-nums" />
+          </label>
+          <label class="flex flex-col">
+            <span class="text-[10px] uppercase tracking-wide text-zinc-500 mb-0.5">Side</span>
+            <select name="transaction_type" class="px-2 py-1 border border-zinc-200 rounded">
+              <option value="BUY" selected>BUY</option>
+              <option value="SELL">SELL</option>
+            </select>
+          </label>
+          <input type="hidden" name="auto_pilot_rank" value="manual" />
+          <button type="submit" class="btn btn-primary text-xs self-end">
+            <i data-lucide="zap"></i>Submit
+          </button>
+        </div>
+
+        <!-- Entry mode — controls whether the BUY fires immediately or
+             waits for the entry_price trigger to be touched. -->
+        <fieldset class="flex items-center gap-4 text-xs border-t border-zinc-100 pt-3">
+          <legend class="sr-only">Entry mode</legend>
+          <span class="text-[10px] uppercase tracking-wide text-zinc-500">Entry mode</span>
+          <label class="flex items-start gap-2 cursor-pointer">
+            <input type="radio" name="entry_mode" value="now" checked class="mt-0.5" />
+            <span>
+              <strong>Buy now (market)</strong>
+              <div class="text-zinc-500 text-[11px]">Immediate MARKET BUY + OCO bracket attached. Use when decision is for today.</div>
+            </span>
+          </label>
+          <label class="flex items-start gap-2 cursor-pointer">
+            <input type="radio" name="entry_mode" value="trigger" class="mt-0.5" />
+            <span>
+              <strong>Buy at trigger</strong>
+              <div class="text-zinc-500 text-[11px]">GTT-single BUY at entry price. Bracket attaches only after fill (resolved 15:50 IST).</div>
+            </span>
+          </label>
+        </fieldset>
       </form>
     </div>
 
@@ -158,7 +181,7 @@
         Discrepancies should be investigated before any automated trading is enabled.
       </div>
 
-      <div class="grid grid-cols-2 md:grid-cols-4 gap-2 mt-4">
+      <div class="grid grid-cols-2 md:grid-cols-5 gap-2 mt-4">
         <div class="card px-3 py-2 border-l-4 border-emerald-500">
           <div class="text-[10px] uppercase tracking-wide text-emerald-700">Matched</div>
           <div class="text-xl font-bold tabular-nums">{{ r.matched|length }}</div>
@@ -179,7 +202,36 @@
           <div class="text-xl font-bold tabular-nums">{{ r.extra|length }}</div>
           <div class="text-[10px] text-zinc-500">in broker, not journal</div>
         </div>
+        <div class="card px-3 py-2 border-l-4 border-violet-500">
+          <div class="text-[10px] uppercase tracking-wide text-violet-700">Pending</div>
+          <div class="text-xl font-bold tabular-nums">{{ r.pending|length }}</div>
+          <div class="text-[10px] text-zinc-500">BUY trigger waiting</div>
+        </div>
       </div>
+
+      {% if r.pending %}
+      <details open class="mt-3 border border-violet-200 rounded-lg p-3 bg-violet-50/40">
+        <summary class="cursor-pointer font-semibold text-violet-900">
+          Pending entries ({{ r.pending|length }}) — GTT-single BUY waiting for trigger fill
+        </summary>
+        <table class="w-full text-xs mt-2">
+          <thead class="text-zinc-500">
+            <tr><th class="text-left pb-1">Symbol</th><th class="text-right pb-1">Qty</th><th class="text-right pb-1">Trigger ₹</th><th class="text-right pb-1">GTT id</th><th class="text-left pb-1 pl-3">Trade</th></tr>
+          </thead>
+          <tbody class="font-mono">
+          {% for p in r.pending %}
+            <tr class="border-t border-violet-100">
+              <td class="py-1">{{ p.symbol }}</td>
+              <td class="text-right tabular-nums">{{ p.qty }}</td>
+              <td class="text-right tabular-nums">₹{{ '{:,.2f}'.format(p.trigger_price) }}</td>
+              <td class="text-right tabular-nums text-zinc-500">{{ p.buy_trigger_id or '—' }}</td>
+              <td class="pl-3"><a href="/trades/{{ p.trade_id }}" class="link">#{{ p.trade_id }}</a></td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </details>
+      {% endif %}
 
       {% if r.mismatched or r.missing or r.extra %}
       <div class="mt-4 space-y-3">

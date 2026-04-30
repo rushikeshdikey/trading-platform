@@ -299,17 +299,113 @@ def _open_qty(trade: Trade) -> int:
     return trade.initial_qty + pyr - ex
 
 
+def _resolve_pending_entries(db: Session, user: User, *, today: date) -> dict:
+    """Phase E1.1 — for trades submitted with entry_mode='trigger', the
+    BUY-trigger GTT may have fired during the day. Walk every pending
+    Trade for the user, look up Kite's order book, and on a filled BUY:
+
+      1. Stamp entry_status='filled', initial_entry_price=actual fill
+      2. Place the GTT-OCO bracket (which we deferred at submit time)
+      3. Save the OCO trigger_id on the Trade
+
+    Trades whose buy-trigger hasn't fired yet stay 'pending' — they'll be
+    revisited on the next 15:50 IST tick. If the user wants to cancel the
+    pending entry, that's a UI action via /positions.
+
+    Returns a summary dict for log lines.
+    """
+    summary = {"checked": 0, "filled": 0, "still_pending": 0, "errored": 0}
+
+    pendings = (
+        db.query(Trade)
+        .filter(Trade.user_id == user.id)
+        .filter(Trade.status == "open")
+        .filter(Trade.entry_status == "pending")
+        .filter(Trade.kite_buy_trigger_id.isnot(None))
+        .all()
+    )
+    if not pendings:
+        return summary
+
+    try:
+        orders = kite_audited.fetch_orders(db, user)
+    except Exception:  # noqa: BLE001
+        log.exception("fetch_orders failed during pending-entry resolution")
+        return summary
+
+    # Build lookup: (symbol, BUY) → first COMPLETE order for today
+    fills_by_symbol: dict[str, dict] = {}
+    for o in orders:
+        if not isinstance(o, dict):
+            continue
+        if o.get("status") != "COMPLETE":
+            continue
+        if o.get("transaction_type") != "BUY":
+            continue
+        sym = (o.get("tradingsymbol") or "").upper()
+        # Multiple fills possible — keep the latest by order_timestamp
+        if sym not in fills_by_symbol or \
+           str(o.get("order_timestamp", "")) > str(fills_by_symbol[sym].get("order_timestamp", "")):
+            fills_by_symbol[sym] = o
+
+    for trade in pendings:
+        summary["checked"] += 1
+        fill = fills_by_symbol.get(trade.instrument.upper())
+        if fill is None:
+            summary["still_pending"] += 1
+            continue
+        try:
+            avg_price = float(fill.get("average_price") or trade.initial_entry_price)
+            order_id = fill.get("order_id")
+            trade.initial_entry_price = avg_price
+            trade.entry_status = "filled"
+            trade.kite_buy_order_id = order_id
+
+            # Place the deferred OCO bracket on the now-real position.
+            target = trade.kite_target_price or (avg_price * 1.05)  # safety default
+            oco_resp = kite_audited.place_gtt_oco(
+                db, user,
+                symbol=trade.instrument, qty=trade.initial_qty,
+                entry_price=avg_price,
+                stop_price=trade.sl,
+                target_price=target,
+                transaction_type="BUY" if trade.side == "B" else "SELL",
+            )
+            trade.kite_trigger_id = oco_resp.get("trigger_id") if isinstance(oco_resp, dict) else None
+            db.commit()
+            summary["filled"] += 1
+            log.info(
+                "pending-entry resolved: %s filled @ %.2f → OCO trigger_id=%s",
+                trade.instrument, avg_price, trade.kite_trigger_id,
+            )
+        except Exception:  # noqa: BLE001
+            log.exception("pending-entry resolve failed for trade=%d", trade.id)
+            db.rollback()
+            summary["errored"] += 1
+
+    return summary
+
+
 def run_for_user(db: Session, user: User, *, today: date | None = None) -> dict:
     """Walk every Kite-managed open trade for ``user``, decide, persist.
 
-    Returns a summary dict suitable for log lines / status pages:
-      {evaluated: N, moved: N, held: N, errored: N, skipped: [...]}
+    Two phases per user:
+      1. Resolve pending entries (entry_mode='trigger' BUYs that fired today)
+         — places the deferred OCO bracket once a position exists.
+      2. Ratchet SL on filled positions per the ladder rules.
+
+    Returns a summary dict suitable for log lines / status pages.
     """
     today = today or date.today()
+
+    # Phase 1: pending-entry resolution.
+    pending_summary = _resolve_pending_entries(db, user, today=today)
+
     trades = (
         db.query(Trade)
         .filter(Trade.user_id == user.id)
         .filter(Trade.status == "open")
+        .filter(Trade.entry_status == "filled")
         .filter(Trade.kite_trigger_id.isnot(None))
         .all()
     )
@@ -317,6 +413,7 @@ def run_for_user(db: Session, user: User, *, today: date | None = None) -> dict:
     summary = {
         "evaluated": 0, "moved": 0, "held": 0, "errored": 0,
         "exit_recommended": 0, "skipped": [],
+        "pending_resolved": pending_summary,
         "user_id": user.id, "date": today.isoformat(),
     }
 

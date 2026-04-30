@@ -59,7 +59,8 @@ class Trade(Base):
 
     # Kite-managed trade fields (Phase E1+). Populated when the trade is
     # placed via /trading/gtt/submit; null for manually-journaled trades.
-    # The TSL daemon only acts on trades where kite_trigger_id is non-null.
+    # The TSL daemon only acts on trades where kite_trigger_id is non-null
+    # AND entry_status == 'filled'.
     kite_trigger_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     # Target leg of the OCO, kept fixed across SL ratchets so we only modify
     # the stop side. Null means we never set one (legacy trades).
@@ -68,6 +69,19 @@ class Trade(Base):
     # "PDL" / "5EMA" / "10EMA" / null. Default to PDL on E1 submission;
     # the trader can override per-trade via /trades/<id>/edit.
     tsl_anchor: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Hybrid entry mode (Phase E1.1):
+    #   'filled'  — position exists at the broker (default; covers manual
+    #               journal trades + entry_mode='now' submissions).
+    #   'pending' — GTT-single BUY trigger placed; entry will fill iff
+    #               trigger price is touched. OCO bracket is placed by
+    #               the TSL daemon at fill-resolution time.
+    entry_status: Mapped[str] = mapped_column(
+        String, nullable=False, default="filled", server_default="filled", index=True,
+    )
+    kite_buy_trigger_id: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, index=True,
+    )
+    kite_buy_order_id: Mapped[str | None] = mapped_column(String, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(

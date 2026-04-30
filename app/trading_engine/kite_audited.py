@@ -207,6 +207,20 @@ def fetch_gtts(db: Session, user: User) -> list[dict]:
         return kc.call("get_gtts", kc.client.get_gtts) or []
 
 
+def fetch_orders(db: Session, user: User) -> list[dict]:
+    """Phase E1.1: today's order list (open + completed + rejected).
+
+    Used by the pending-entry resolver to find the BUY order spawned by a
+    GTT-single trigger and check whether it filled. Each row has fields
+    like order_id, status, average_price, filled_quantity, transaction_type.
+    Empty list if not authed.
+    """
+    with session(db, user) as kc:
+        if not kc.is_authed:
+            return []
+        return kc.call("get_orders", kc.client.orders) or []
+
+
 # ---------------------------------------------------------------------------
 # Phase E1 write surface — order placement.
 #
@@ -311,6 +325,52 @@ def cancel_gtt(db: Session, user: User, trigger_id: int) -> dict:
         if not kc.is_authed:
             raise RuntimeError("not authed with Kite")
         return kc.call("delete_gtt", kc.client.delete_gtt, trigger_id=trigger_id)
+
+
+def place_gtt_single_buy(
+    db: Session, user: User, *,
+    symbol: str, qty: int, trigger_price: float,
+) -> dict:
+    """Place a GTT-single BUY trigger — fires a LIMIT BUY when LTP touches
+    ``trigger_price``. Used by the hybrid entry mode 'trigger' path; the
+    OCO bracket is placed later, after the BUY fills.
+
+    Returns Kite's response dict; the broker's GTT id is in ``trigger_id``.
+    """
+    from .. import kite as kite_mod
+
+    if qty <= 0:
+        raise ValueError(f"qty must be positive, got {qty}")
+    if trigger_price <= 0:
+        raise ValueError(f"trigger_price must be positive, got {trigger_price}")
+
+    inst = kite_mod._resolve_instrument(db, symbol)
+    if inst is None:
+        raise RuntimeError(f"can't resolve {symbol} to a Kite instrument")
+
+    orders = [{
+        "exchange": inst.exchange,
+        "tradingsymbol": inst.tradingsymbol,
+        "transaction_type": "BUY",
+        "quantity": qty,
+        "order_type": "LIMIT",
+        "product": "CNC",
+        "price": trigger_price,
+    }]
+
+    with session(db, user) as kc:
+        if not kc.is_authed:
+            raise RuntimeError("not authed with Kite")
+        return kc.call(
+            "place_gtt",
+            kc.client.place_gtt,
+            trigger_type=kc.client.GTT_TYPE_SINGLE,
+            tradingsymbol=inst.tradingsymbol,
+            exchange=inst.exchange,
+            trigger_values=[trigger_price],
+            last_price=trigger_price,
+            orders=orders,
+        )
 
 
 def place_order_market(
