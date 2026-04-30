@@ -278,6 +278,66 @@ def _today_placed_risk(db: Session, user: User) -> float:
     return total_risk
 
 
+def _detect_symbol_conflict(db: Session, user: User, symbol: str) -> str | None:
+    """Pre-flight check before placing a new order for ``symbol``.
+
+    Returns a human-readable conflict description (used as ?gtt_err=...)
+    if any of these are true at Kite:
+
+      1. Open regular order (any side) on the symbol — would interact
+         with the new order at the exchange.
+      2. Active GTT (single or OCO) on the symbol that's NOT a freshly-
+         placed BUY-trigger from our app. Stale brackets from prior
+         sessions can fire when a new BUY adds shares to demat.
+      3. Triggered-but-not-completed GTT — most dangerous case; a
+         dormant LIMIT order is sitting at the exchange waiting for
+         shares to materialise.
+
+    Returns None if no conflict.
+
+    Heuristic, not exhaustive — meant to catch the common failure
+    modes seen in the SCI live test (orphan OCO auto-closing a fresh
+    BUY). Trader should still glance at the Zerodha GTT/Orders tab
+    before any high-conviction submit.
+    """
+    sym_u = symbol.upper().strip()
+
+    try:
+        gtts = kite_audited.fetch_gtts(db, user)
+    except Exception:  # noqa: BLE001
+        log.exception("fetch_gtts failed during pre-flight check")
+        return None
+
+    for g in gtts or []:
+        if not isinstance(g, dict):
+            continue
+        cond = g.get("condition") or {}
+        gsym = (cond.get("tradingsymbol") or "").upper().strip()
+        if gsym != sym_u:
+            continue
+        status = (g.get("status") or "").lower()
+        if status == "triggered":
+            return (
+                f"GTT id {g.get('id')} on {sym_u} is TRIGGERED — a "
+                f"dormant order is sitting at the exchange. Cancel it "
+                f"on Kite before placing a new entry."
+            )
+        if status == "active":
+            # Active GTT for this symbol exists. If it's an OCO bracket
+            # (two orders, both same direction) — that's an exit
+            # bracket, dangerous if we're about to BUY.
+            orders = g.get("orders") or []
+            if len(orders) >= 2:
+                tx_types = {o.get("transaction_type") for o in orders}
+                if tx_types == {"SELL"}:
+                    return (
+                        f"Active OCO SELL bracket already exists on "
+                        f"{sym_u} (GTT id {g.get('id')}). New BUY would "
+                        f"feed it. Cancel the existing OCO first."
+                    )
+    return None
+
+
 @router.post("/gtt/submit")
 def submit_gtt(
     request: Request,
@@ -319,6 +379,24 @@ def submit_gtt(
     if not auth["authed"]:
         return RedirectResponse(
             url=f"{return_path}?gtt_err=not_authed", status_code=303,
+        )
+
+    # Pre-flight conflict check (Phase E1.2). Before placing ANY new order
+    # for a symbol, look for existing GTTs + open orders at Kite that
+    # could fire on the new position. The classic failure mode: a stale
+    # GTT-OCO from a prior session has already triggered (TRIGGERED
+    # state) and has a dormant LIMIT SELL sitting at the exchange. The
+    # moment we BUY, the dormant SELL matches and auto-closes.
+    try:
+        conflict = _detect_symbol_conflict(db, user, symbol)
+    except Exception:  # noqa: BLE001
+        log.exception("pre-flight conflict check failed (continuing)")
+        conflict = None
+    if conflict:
+        from urllib.parse import quote as _q
+        return RedirectResponse(
+            url=f"{return_path}?gtt_err=conflict_{_q(conflict)[:200]}",
+            status_code=303,
         )
 
     # Daily-cap check (server-side, hard). Risk is the same regardless of
@@ -479,6 +557,60 @@ def cancel_gtt(
             status_code=303,
         )
     return RedirectResponse(url="/trading/kite?gtt_cancelled=1", status_code=303)
+
+
+@router.post("/journal-close/{trade_id}")
+def force_close_journal(
+    trade_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(auth_mod.require_user),
+    fill_price: float = Form(...),
+):
+    """Journal-only close — for trades whose broker side is gone but the
+    journal still says open. Doesn't touch Kite. Use case: an orphan
+    GTT auto-closed your position before you could react, leaving the
+    journal Trade row out of sync with the broker.
+
+    Adds an Exit row at ``fill_price`` for the full open qty, then
+    re-runs the close-status logic so status flips to 'closed'.
+    Also clears kite_trigger_id and kite_buy_trigger_id so reconciliation
+    + TSL daemon stop acting on the trade.
+    """
+    from .. import calculations as calc
+    from ..models import Exit
+    from datetime import date as _date
+
+    trade = db.get(Trade, trade_id)
+    if trade is None or trade.user_id != user.id:
+        raise HTTPException(404)
+
+    remaining = calc.open_qty(trade)
+    if remaining <= 0:
+        return RedirectResponse(
+            url=f"/positions?force_close_err=already_closed&trade_id={trade_id}",
+            status_code=303,
+        )
+
+    if fill_price <= 0:
+        return RedirectResponse(
+            url=f"/positions?force_close_err=bad_price&trade_id={trade_id}",
+            status_code=303,
+        )
+
+    seq = (max((e.sequence for e in trade.exits), default=0) + 1) if trade.exits else 1
+    trade.exits.append(Exit(
+        sequence=seq, price=fill_price, qty=remaining, date=_date.today(),
+    ))
+    trade.status = "closed"
+    trade.close_date = _date.today()
+    trade.kite_trigger_id = None
+    trade.kite_buy_trigger_id = None
+    db.commit()
+
+    return RedirectResponse(
+        url=f"/positions?force_close_ok=1&trade_id={trade_id}&qty={remaining}",
+        status_code=303,
+    )
 
 
 @router.post("/pending/{trade_id}/cancel")

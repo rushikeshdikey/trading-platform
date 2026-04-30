@@ -29,6 +29,16 @@
       <strong>Cancel failed:</strong> <span class="font-mono">{{ request.query_params.get('cancel_err') }}</span>
     </div>
   {% endif %}
+  {% if request.query_params.get('force_close_ok') %}
+    <div class="p-3 rounded-lg bg-zinc-50 border border-zinc-200 text-zinc-700 text-sm">
+      Trade #{{ request.query_params.get('trade_id') }} closed in journal ({{ request.query_params.get('qty') }} qty exit). Broker side untouched.
+    </div>
+  {% endif %}
+  {% if request.query_params.get('force_close_err') %}
+    <div class="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-sm">
+      <strong>Force-close failed:</strong> <span class="font-mono">{{ request.query_params.get('force_close_err') }}</span>
+    </div>
+  {% endif %}
 
   <!-- Header -->
   <div class="flex items-start justify-between flex-wrap gap-3">
@@ -255,6 +265,20 @@
             </button>
           </form>
           {% endif %}
+
+          <!-- Journal-only force-close — for when the broker side is gone
+               (orphan-GTT auto-sold the position, manual sell at Zerodha,
+               etc.) and you need to reconcile the journal without touching
+               Kite. Visible on every card but the use case is rare. -->
+          <form method="post" action="/trading/journal-close/{{ c.trade_id }}" class="mt-1 flex items-center gap-1"
+                onsubmit="return confirm('Close in JOURNAL ONLY?\n\n{{ c.instrument }}  ·  full open qty {{ c.open_qty }}\nat ₹' + this.fill_price.value + '\n\nThis does NOT touch Kite. Use only when the broker side is already flat (e.g. orphan GTT auto-sold).');">
+            <input type="number" name="fill_price" step="0.05" min="0.05"
+                   value="{{ '%.2f'|format(c.cmp or c.avg_entry) }}" required
+                   class="w-20 px-2 py-1 text-xs border border-zinc-200 rounded tabular-nums" placeholder="fill ₹" />
+            <button type="submit" class="btn btn-outline text-[11px] !py-1 flex-1 border-zinc-300 text-zinc-600 hover:bg-zinc-50">
+              <i data-lucide="archive" class="w-3 h-3"></i>Close in journal only
+            </button>
+          </form>
         </div>
         {% endfor %}
       </div>
