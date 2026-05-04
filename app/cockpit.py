@@ -302,7 +302,12 @@ def _pending_exits(db: Session) -> list[PendingExit]:
     return out
 
 
-def build_cockpit(db: Session) -> CockpitState:
+def build_cockpit(
+    db: Session, *, entry_overrides: dict[str, str] | None = None,
+) -> CockpitState:
+    """Build the cockpit state. ``entry_overrides`` is a per-symbol map
+    of forced entry types (Phase C — URL-driven overrides like
+    ``?override=BHARATFORG:Pullback&override=PAISALO:StrongStart``)."""
     market = build_market_verdict(db)
     positions = build_position_actions(db)
     risk = build_risk_budget(db)
@@ -310,7 +315,7 @@ def build_cockpit(db: Session) -> CockpitState:
     edge = build_edge_panel(db)
     pending_exits = _pending_exits(db)
     from . import auto_pilot as ap_mod
-    auto_pilot = ap_mod.build_daily_picks(db)
+    auto_pilot = ap_mod.build_daily_picks(db, overrides=entry_overrides or {})
     # Stamp the market verdict so the panel can render "Stay in cash" loud
     # when the macro is RED regardless of A+ picks existing.
     auto_pilot.market_verdict_level = market.level

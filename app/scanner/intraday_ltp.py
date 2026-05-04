@@ -46,22 +46,40 @@ _cache: dict[str, TodayOHLC] = {}
 _cache_lock = threading.Lock()
 
 
-def _resolve_yf_symbol(symbol: str) -> str:
-    """NSE-listed Indian stocks need the .NS suffix on yfinance."""
+def _yf_candidates(symbol: str) -> list[str]:
+    """Order in which to try yfinance suffixes for an Indian symbol.
+
+    NSE first because most of our scanner universe is NSE-listed; BSE
+    fallback catches the small-/micro-caps yfinance hasn't ingested
+    on the NSE feed yet (PAISALO is a recent example).
+    """
     s = (symbol or "").strip().upper()
     if not s:
-        return s
+        return []
     if s.endswith(".NS") or s.endswith(".BO"):
-        return s
-    return f"{s}.NS"
+        return [s]
+    return [f"{s}.NS", f"{s}.BO"]
+
+
+def _fetch_one_yf(yf_sym: str, period: str = "2d", interval: str = "1d"):
+    """Single yfinance call. Returns the dataframe or None on empty/error."""
+    try:
+        import yfinance as yf
+        ticker = yf.Ticker(yf_sym)
+        df = ticker.history(period=period, interval=interval, auto_adjust=False)
+        if df is None or df.empty:
+            return None
+        return df
+    except Exception as exc:  # noqa: BLE001
+        log.debug("yfinance fetch failed for %s: %s", yf_sym, exc)
+        return None
 
 
 def fetch_today_ohlc(symbol: str) -> TodayOHLC | None:
     """Return today's running OHLC for ``symbol`` or None on any failure.
 
-    Cached for ``CACHE_TTL_S`` seconds. Two requests for the same symbol
-    inside the window share the same fetch — important when /cockpit
-    renders 5 picks and the user hits refresh.
+    Tries NSE first (.NS), falls back to BSE (.BO) if NSE has no data.
+    Cached for ``CACHE_TTL_S`` seconds.
     """
     sym = (symbol or "").strip().upper()
     if not sym:
@@ -73,30 +91,28 @@ def fetch_today_ohlc(symbol: str) -> TodayOHLC | None:
         if cached and (now - cached.fetched_at) < CACHE_TTL_S:
             return cached
 
+    from datetime import date, timedelta
+    today = date.today()
+
+    df = None
+    used_sym = None
+    for candidate in _yf_candidates(sym):
+        df = _fetch_one_yf(candidate, period="2d", interval="1d")
+        if df is not None and not df.empty:
+            used_sym = candidate
+            break
+
+    if df is None:
+        log.debug("yfinance empty for %s on all suffixes", sym)
+        return None
+
+    last = df.iloc[-1]
+    idx_date = last.name.date() if hasattr(last.name, "date") else None
+    if idx_date and idx_date < today - timedelta(days=4):
+        log.debug("yfinance returned stale row for %s: %s", used_sym, idx_date)
+        return None
+
     try:
-        import yfinance as yf
-        from datetime import date, timedelta
-
-        yf_sym = _resolve_yf_symbol(sym)
-        ticker = yf.Ticker(yf_sym)
-        # period='2d' covers today + yesterday; we want today's row.
-        # Using 1d interval; during market hours today's row updates with
-        # running OHLC, after close it's the final settled bar.
-        df = ticker.history(period="2d", interval="1d", auto_adjust=False)
-        if df is None or df.empty:
-            log.debug("yfinance empty for %s", yf_sym)
-            return None
-
-        last = df.iloc[-1]
-        # Sanity: ensure last row corresponds to today (yfinance occasionally
-        # lags by a session over weekends/holidays).
-        idx_date = last.name.date() if hasattr(last.name, "date") else None
-        today = date.today()
-        if idx_date and idx_date < today - timedelta(days=4):
-            # More than 4 days old — definitely not "today" — bail.
-            log.debug("yfinance returned stale row for %s: %s", yf_sym, idx_date)
-            return None
-
         ohlc = TodayOHLC(
             symbol=sym,
             open=float(last["Open"]),
@@ -105,13 +121,67 @@ def fetch_today_ohlc(symbol: str) -> TodayOHLC | None:
             ltp=float(last["Close"]),
             fetched_at=now,
         )
-    except Exception as exc:  # noqa: BLE001
-        log.debug("yfinance fetch failed for %s: %s", sym, exc)
+    except (KeyError, ValueError, TypeError) as exc:
+        log.debug("yfinance row parse failed for %s: %s", sym, exc)
         return None
 
     with _cache_lock:
         _cache[sym] = ohlc
     return ohlc
+
+
+def fetch_first_15m_high(symbol: str) -> float | None:
+    """First-15-min high of today's session — the "Strong Start" trigger
+    reference. Scans the 15m bar at 09:15-09:30 IST (first 15 minutes
+    of NSE cash session).
+
+    Returns None if 15-min data unavailable (yfinance is unreliable on
+    intraday for some Indian small-caps) or if today's first bar hasn't
+    formed yet (called before 09:30 IST).
+    """
+    sym = (symbol or "").strip().upper()
+    if not sym:
+        return None
+
+    cache_key = f"{sym}::first15m"
+    now = time.time()
+    with _cache_lock:
+        cached = _cache.get(cache_key)
+        if cached and (now - cached.fetched_at) < CACHE_TTL_S * 5:
+            # Once today's first bar is in, it doesn't change — cache
+            # for 5 minutes (instead of 1) to save yfinance calls.
+            return cached.high
+
+    df = None
+    for candidate in _yf_candidates(sym):
+        # 5d window ensures we see today's bars even if today is the
+        # first session post-weekend.
+        df = _fetch_one_yf(candidate, period="5d", interval="15m")
+        if df is not None and not df.empty:
+            break
+
+    if df is None or df.empty:
+        return None
+
+    from datetime import date as _date
+    today = _date.today()
+    # yfinance 15m index is timezone-aware UTC; first bar of NSE day is
+    # 09:15 IST = 03:45 UTC. Filter to today's bars.
+    try:
+        df_today = df[df.index.date == today]
+    except Exception:  # noqa: BLE001
+        return None
+    if df_today.empty:
+        return None
+
+    first_bar = df_today.iloc[0]
+    high = float(first_bar["High"])
+
+    with _cache_lock:
+        _cache[cache_key] = TodayOHLC(
+            symbol=sym, open=0, high=high, low=0, ltp=0, fetched_at=now,
+        )
+    return high
 
 
 def fetch_many(symbols: list[str]) -> dict[str, TodayOHLC]:

@@ -22,9 +22,19 @@ router = APIRouter(prefix="/cockpit")
 
 @router.get("", response_class=HTMLResponse)
 def cockpit_home(request: Request, db: Session = Depends(get_db)):
-    state = cockpit_svc.build_cockpit(db)
+    # Phase C — parse ?override=SYMBOL:EntryType params (multi-valued).
+    # E.g. /cockpit?override=BHARATFORG:Pullback&override=PAISALO:PDH
+    overrides: dict[str, str] = {}
+    for raw in request.query_params.getlist("override"):
+        if ":" in raw:
+            sym, _, etype = raw.partition(":")
+            sym = sym.strip().upper()
+            etype = etype.strip()
+            if sym and etype:
+                overrides[sym] = etype
+    state = cockpit_svc.build_cockpit(db, entry_overrides=overrides)
     return templates.TemplateResponse(
         request,
         "cockpit.html",
-        {"state": state},
+        {"state": state, "entry_overrides": overrides},
     )

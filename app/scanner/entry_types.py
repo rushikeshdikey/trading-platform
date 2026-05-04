@@ -100,6 +100,35 @@ def pdh_trigger(prev_high: float) -> EntryRecommendation:
     )
 
 
+def strong_start_trigger(
+    first_15m_high: float, prev_close: float, today_open: float,
+) -> EntryRecommendation | None:
+    """Buy stop above the first-15-min high — only valid when the stock
+    has shown strength at open (gap up or strong push without gap-down).
+
+    Returns None if the strong-start preconditions aren't met:
+      - today_open < prev_close (gapped down) → not a strong start
+      - first_15m_high < today_open + tiny pad → flat open, no momentum
+
+    Strong Start is the most aggressive momentum entry — best on
+    institutional-accumulation names that gap up with volume.
+    """
+    if today_open < prev_close:
+        return None
+    # Require some intraday push: first-15m high should be at least
+    # 0.2% above today's open. Otherwise it's just a flat first bar.
+    if first_15m_high < today_open * 1.002:
+        return None
+    return EntryRecommendation(
+        entry_type=STRONG_START,
+        trigger_price=_pad(first_15m_high, 10),
+        rationale=(
+            f"Strong open + first-15m high ₹{first_15m_high:.2f}; "
+            f"buy stop above first-15m peak"
+        ),
+    )
+
+
 def pivot_break_trigger(
     pivot_level: float, *, source: str = "pivot",
 ) -> EntryRecommendation:
@@ -203,11 +232,14 @@ def recommend_entry_for_pick(
     daily_closes: list[float],        # ascending-date closes for EMA calc
     prev_high: float,
     prev_low: float,
+    prev_close: float | None,
     today_open: float | None,
     today_high: float | None,
     today_low: float | None,
     today_ltp: float | None,
+    first_15m_high: float | None,    # if available, Strong Start may fire
     fallback_entry: float,            # scanner's suggested_entry (used if recommender returns None)
+    forced_entry_type: str | None = None,  # per-pick override (Phase C)
 ) -> EntryRecommendation:
     """Pick the natural entry type for the scanner that fired and
     compute the trigger. Falls back to PDH if the natural type isn't
@@ -219,12 +251,28 @@ def recommend_entry_for_pick(
     natural = SCANNER_NATURAL_ENTRY.get(primary_scan_type, PIVOT_BREAK)
     extras = candidate_extras or {}
 
+    # Phase C — caller wants a specific entry type for this pick. Compute
+    # if possible; if the type isn't applicable to today's data (e.g.
+    # InsideBar requested but today isn't an inside bar), fall back to
+    # the natural type rather than refusing.
+    if forced_entry_type:
+        forced = _try_specific_type(
+            forced_entry_type,
+            extras=extras, daily_closes=daily_closes,
+            prev_high=prev_high, prev_low=prev_low, prev_close=prev_close,
+            today_open=today_open, today_high=today_high,
+            today_low=today_low, today_ltp=today_ltp,
+            first_15m_high=first_15m_high, fallback_entry=fallback_entry,
+        )
+        if forced is not None:
+            return forced
+        # Otherwise fall through to natural mapping.
+
     # Tightness Trading carries an explicit buy_point ('A' or 'B') in
     # extras — A = pullback to base support, B = breakout. Honour it.
     if primary_scan_type == "tightness_trading":
         bp = extras.get("buy_point")
         if bp == "A":
-            # A = pullback at base support; suggested_entry already there.
             return EntryRecommendation(
                 entry_type=PULLBACK,
                 trigger_price=round(fallback_entry, 2),
@@ -236,6 +284,16 @@ def recommend_entry_for_pick(
                 trigger_price=round(fallback_entry, 2),
                 rationale="Tightness Trading buy point B — breakout from tight high",
             )
+
+    # Institutional Buying — try Strong Start first (if 15m + open data
+    # confirm a momentum start), fall back to PDH.
+    if primary_scan_type == "institutional_buying":
+        if (first_15m_high is not None and prev_close is not None
+                and today_open is not None):
+            ss = strong_start_trigger(first_15m_high, prev_close, today_open)
+            if ss is not None:
+                return ss
+        return pdh_trigger(prev_high)
 
     if natural == PDH:
         return pdh_trigger(prev_high)
@@ -275,6 +333,66 @@ def recommend_entry_for_pick(
         # Not inside bar today → fall back to PDH.
         return pdh_trigger(prev_high)
 
-    # Strong Start — beta. Without 15-min intraday bars we can't compute
-    # the first-15m high, so degrade to PDH.
+    # Strong Start as natural — only if 15m data is available.
+    if natural == STRONG_START:
+        if (first_15m_high is not None and prev_close is not None
+                and today_open is not None):
+            ss = strong_start_trigger(first_15m_high, prev_close, today_open)
+            if ss is not None:
+                return ss
+        return pdh_trigger(prev_high)
+
     return pdh_trigger(prev_high)
+
+
+# ---------------------------------------------------------------------------
+# Phase C — per-pick override helper. Tries the user-requested entry type;
+# returns None if today's data can't support it (caller falls back to natural).
+# ---------------------------------------------------------------------------
+
+
+def _try_specific_type(
+    forced: str, *,
+    extras: dict, daily_closes: list[float],
+    prev_high: float, prev_low: float, prev_close: float | None,
+    today_open: float | None, today_high: float | None,
+    today_low: float | None, today_ltp: float | None,
+    first_15m_high: float | None, fallback_entry: float,
+) -> EntryRecommendation | None:
+    """Try to compute a specific entry type. Returns None if not feasible
+    on today's data — caller decides whether to fall back."""
+    if forced == PDH:
+        return pdh_trigger(prev_high)
+
+    if forced == PIVOT_BREAK:
+        pivot = (
+            extras.get("cluster_high")
+            or extras.get("base_high")
+            or extras.get("resistance")
+            or extras.get("resistance_level")
+            or fallback_entry
+        )
+        return pivot_break_trigger(pivot, source="pivot/base high")
+
+    if forced == ANTICIPATION:
+        if today_ltp:
+            return anticipation_trigger(today_ltp)
+        return None
+
+    if forced == PULLBACK:
+        ema10 = _ema(daily_closes, 10)
+        ema20 = _ema(daily_closes, 20)
+        return pullback_trigger(ema10, ema20, today_ltp)
+
+    if forced == INSIDE_BAR:
+        if today_high and today_low:
+            return inside_bar_trigger(today_high, today_low, prev_high, prev_low)
+        return None
+
+    if forced == STRONG_START:
+        if (first_15m_high is not None and prev_close is not None
+                and today_open is not None):
+            return strong_start_trigger(first_15m_high, prev_close, today_open)
+        return None
+
+    return None

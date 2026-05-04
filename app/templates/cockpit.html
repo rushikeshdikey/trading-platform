@@ -165,13 +165,28 @@
             {% endif %}
             {% endif %}
 
-            {# Entry-type rationale on its own line — full width so it's
-               not chopped by the column constraint. Always visible because
-               the trader needs to see HOW to enter, not just WHERE. #}
+            {# Entry-type rationale + per-pick override (Phase C). Each
+               pill links to /cockpit with ?override=SYM:Type, preserving
+               existing overrides for other symbols. Currently-active type
+               is filled violet; alternates are subtle pills. #}
             {% if p.entry_rationale %}
-            <div class="text-[11px] text-violet-700 mt-0.5">
-              <i data-lucide="target" class="w-3 h-3 inline -mt-0.5"></i>
-              {{ p.entry_rationale }}
+            <div class="text-[11px] text-violet-700 mt-0.5 flex items-center gap-2 flex-wrap">
+              <span><i data-lucide="target" class="w-3 h-3 inline -mt-0.5"></i> {{ p.entry_rationale }}</span>
+              <span class="text-zinc-400">·</span>
+              <span class="inline-flex items-center gap-1">
+                <span class="text-[10px] uppercase tracking-wide text-zinc-500">switch:</span>
+                {% for type_id, type_label in [('PDH','PDH'), ('PivotBreak','Pivot'), ('Pullback','Pullback'), ('Anticipation','Anticipate'), ('InsideBar','Inside'), ('StrongStart','Strong')] %}
+                  {% set ns = namespace(parts=[]) %}
+                  {% for sym, etype in (entry_overrides or {}).items() if sym != p.symbol %}
+                    {% set ns.parts = ns.parts + ['override=' + sym + ':' + etype] %}
+                  {% endfor %}
+                  {% set ns.parts = ns.parts + ['override=' + p.symbol + ':' + type_id] %}
+                  <a href="?{{ ns.parts|join('&') }}"
+                     class="pill text-[10px] !py-0 !px-1.5 border
+                        {% if p.entry_type == type_id %}bg-violet-100 text-violet-900 border-violet-300 font-bold{% else %}bg-white text-zinc-600 border-zinc-200 hover:bg-zinc-50{% endif %}"
+                     title="Switch entry to {{ type_label }}">{{ type_label }}</a>
+                {% endfor %}
+              </span>
             </div>
             {% endif %}
           </div>

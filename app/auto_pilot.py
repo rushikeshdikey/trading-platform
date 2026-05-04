@@ -109,11 +109,18 @@ def _confluence_from_scans(scans: list[dict]) -> list[str]:
     return [s["label"] for s in sorted(scans, key=lambda s: s["score"], reverse=True)]
 
 
-def build_daily_picks(db: Session) -> AutoPilotState:
+def build_daily_picks(
+    db: Session, *, overrides: dict[str, str] | None = None,
+) -> AutoPilotState:
     """Read the unified scanner cache, build the day's picks. Always
     returns a state — empty picks + no_trade_reason if nothing qualifies
     or the regime is hard-blocked.
+
+    ``overrides``: optional ``{symbol: entry_type}`` map (Phase C). When
+    a pick's symbol appears in the map, the recommender is forced to
+    use that entry type (or falls back if today's data can't support it).
     """
+    overrides = overrides or {}
     state = AutoPilotState()
     state.capital = dash_svc.current_capital(db)
 
@@ -277,7 +284,23 @@ def build_daily_picks(db: Session) -> AutoPilotState:
         prev_bar = symbol_bars[-1] if symbol_bars else None
         prev_high = float(prev_bar.high) if prev_bar else scanner_entry
         prev_low = float(prev_bar.low) if prev_bar else sl
+        prev_close = float(prev_bar.close) if prev_bar else None
         daily_closes = [float(b.close) for b in symbol_bars]
+
+        # Strong Start needs 15m intraday data — only fetched when the
+        # primary scanner could benefit (institutional_buying) OR the user
+        # explicitly overrode to StrongStart for this pick.
+        first_15m_high: float | None = None
+        forced_type = overrides.get(slot["symbol"].upper())
+        wants_15m = (
+            c.scan_type == "institutional_buying"
+            or forced_type == entry_types_mod.STRONG_START
+        )
+        if wants_15m:
+            try:
+                first_15m_high = ltp_mod.fetch_first_15m_high(slot["symbol"])
+            except Exception:  # noqa: BLE001
+                first_15m_high = None
 
         rec = entry_types_mod.recommend_entry_for_pick(
             scan_types_fired=[s["type"] for s in slot["scans"]],
@@ -286,11 +309,14 @@ def build_daily_picks(db: Session) -> AutoPilotState:
             daily_closes=daily_closes,
             prev_high=prev_high,
             prev_low=prev_low,
+            prev_close=prev_close,
             today_open=ohlc.open if ohlc else None,
             today_high=ohlc.high if ohlc else None,
             today_low=ohlc.low if ohlc else None,
             today_ltp=ohlc.ltp if ohlc else None,
+            first_15m_high=first_15m_high,
             fallback_entry=scanner_entry,
+            forced_entry_type=forced_type,
         )
         # Trigger price is the AUTHORITATIVE entry (decision #4 from spec).
         entry = rec.trigger_price
