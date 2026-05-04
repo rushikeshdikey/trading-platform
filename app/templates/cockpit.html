@@ -228,20 +228,32 @@
 
         {# Phase E1: one-click GTT-OCO submit. Wraps a confirm modal so the
            user always sees the exact entry/SL/target/qty before posting.
-           Server-side daily-cap (2.5% portfolio risk) is enforced regardless. #}
+           Server-side daily-cap (2.5% portfolio risk) is enforced regardless.
+
+           Entry-mode is picked from p.entry_type:
+           - PDH/PivotBreak/StrongStart/InsideBar require an UPWARD break
+             → entry_mode='trigger' (GTT-single, fires only on price clearing
+             the trigger). A LIMIT-BUY at trigger here would fill immediately
+             at LTP because trigger > LTP makes the limit "marketable".
+           - Pullback/Anticipation want a passive wait BELOW current price
+             → entry_mode='now' (LIMIT BUY at trigger sits below ask, waits
+             for price to come down to it). #}
+        {% set _trigger_types = ['PDH', 'PivotBreak', 'StrongStart', 'InsideBar'] %}
+        {% set _entry_mode = 'trigger' if p.entry_type in _trigger_types else 'now' %}
+        {% set _mode_label = 'GTT-trigger BUY (fires when price clears trigger)' if _entry_mode == 'trigger' else 'LIMIT BUY at trigger (waits if LTP above)' %}
         <form method="post" action="/trading/gtt/submit" class="inline"
-              onsubmit="return confirm('Submit GTT-OCO to Kite?\n\n{{ p.symbol }}  ·  qty {{ p.qty }}\nEntry ₹{{ p.entry }}\nSL ₹{{ p.sl }} ({{ p.sl_pct }}%)\nTarget ₹{{ p.target }}\nRisk ₹{{ '{:,.0f}'.format(p.risk_rs) }}\n\nThis places the order at Kite. Cannot be undone via this page (cancel via /trading/kite).');">
+              onsubmit="return confirm('Submit to Kite?\n\n{{ p.symbol }}  ·  qty {{ p.qty }}\nMode: {{ _mode_label }}\nEntry/Trigger ₹{{ p.entry }}\nSL ₹{{ p.sl }} ({{ p.sl_pct }}%)\nTarget ₹{{ p.target }}\nRisk ₹{{ '{:,.0f}'.format(p.risk_rs) }}\n\nThis places the order at Kite. Cannot be undone via this page (cancel via /trading/kite).');">
           <input type="hidden" name="symbol" value="{{ p.symbol }}">
           <input type="hidden" name="qty" value="{{ p.qty }}">
           <input type="hidden" name="entry_price" value="{{ p.entry }}">
           <input type="hidden" name="stop_price" value="{{ p.sl }}">
           <input type="hidden" name="target_price" value="{{ p.target }}">
           <input type="hidden" name="transaction_type" value="BUY">
-          <input type="hidden" name="entry_mode" value="now">
+          <input type="hidden" name="entry_mode" value="{{ _entry_mode }}">
           <input type="hidden" name="auto_pilot_rank" value="{{ p.rank }}">
           <button class="btn !py-2 !px-3 text-xs whitespace-nowrap bg-amber-100 text-amber-900 border border-amber-300 hover:bg-amber-200"
-                  title="MARKET BUY now + OCO bracket attached">
-            <i data-lucide="zap"></i>Submit GTT
+                  title="{{ _mode_label }} + OCO bracket on fill">
+            <i data-lucide="zap"></i>Submit {% if _entry_mode == 'trigger' %}trigger{% else %}GTT{% endif %}
           </button>
         </form>
 
