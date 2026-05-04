@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 from . import breadth as breadth_mod
 from . import dashboard as dash_svc
 from . import sector_rotation as sector_rotation_mod
+from .scanner import intraday_ltp as ltp_mod
 from .scanner import risk as risk_svc
 from .scanner import runner as scanner_runner
 from .scanner import scoring as scoring_mod
@@ -65,6 +66,13 @@ class DailyPick:
     sl_method: str             # "3-bar low" / "2×ATR(7)" / "soft cap" — for trust
     score: float
     tier: str                  # "A+" / "A"
+    # Phase A reality-check — populated when intraday LTP is available.
+    today_open: float | None = None
+    today_high: float | None = None
+    today_low: float | None = None
+    today_ltp: float | None = None
+    today_status: str = "unknown"   # 'reachable' / 'chasing' / 'invalidated' / 'unknown'
+    today_status_reason: str = ""   # human-readable note for the badge
 
 
 @dataclass
@@ -82,6 +90,9 @@ class AutoPilotState:
     regime_label: str = ""
     regime_reason: str = ""
     regime_mood: float | None = None
+    # Phase A reality-check — counts that summarise the LTP refresh layer.
+    dropped_invalidated: int = 0      # picks whose SL was already breached today
+    intraday_fetch_failed: int = 0    # picks where yfinance couldn't fetch
 
     @property
     def has_picks(self) -> bool:
@@ -193,7 +204,11 @@ def build_daily_picks(db: Session) -> AutoPilotState:
             state.no_trade_reason = "Scanner cache exists but no candidates surfaced."
         return state
 
-    qualifiers = qualifiers[:MAX_PICKS]
+    # Pull a small overflow buffer so SL-breached drops can be backfilled
+    # from the next-best qualifiers — the user still sees MAX_PICKS rows
+    # if enough candidates exist.
+    OVERFLOW = 3
+    qualifiers = qualifiers[: MAX_PICKS + OVERFLOW]
 
     # ----------------------------------------------------------------------
     # 5. Position-size each qualifier. Floor risk tier for auto-pilot.
@@ -202,12 +217,53 @@ def build_daily_picks(db: Session) -> AutoPilotState:
     risk_pct_used = risk_low or DEFAULT_RISK_FLOOR_PCT
     state.risk_pct_used = risk_pct_used
 
-    for i, (composite, slot, breakdown) in enumerate(qualifiers, start=1):
+    # Phase A reality-check — fetch today's OHLC for each qualifier so we
+    # can drop SL-breached candidates and tag chasing ones BEFORE assigning
+    # ranks. Failed fetches fall through with today_status='unknown'.
+    qualifier_symbols = [slot["symbol"] for _, slot, _ in qualifiers]
+    today_ohlc_by_sym = ltp_mod.fetch_many(qualifier_symbols)
+
+    rank = 0
+    for composite, slot, breakdown in qualifiers:
+        if rank >= MAX_PICKS:
+            break  # buffer was for SL-drop backfill; not for showing >5
         c = slot["primary"]
         entry = float(c.suggested_entry or c.close)
         sl = float(c.suggested_sl)
         if entry <= 0 or sl <= 0 or sl >= entry:
             continue
+
+        # Reality-check against today's intraday OHLC.
+        ohlc = today_ohlc_by_sym.get(slot["symbol"])
+        today_status = "unknown"
+        today_status_reason = "intraday LTP unavailable — using prior close"
+        if ohlc is None:
+            state.intraday_fetch_failed += 1
+        else:
+            # SL breached intraday → setup is dead. Drop entirely.
+            if ohlc.low <= sl:
+                state.dropped_invalidated += 1
+                log.info(
+                    "auto_pilot drop %s: SL breached intraday (low %.2f ≤ SL %.2f)",
+                    slot["symbol"], ohlc.low, sl,
+                )
+                continue
+            # If today's low is above the planned entry, the stock has
+            # already moved past plan — chasing required. Keep but tag.
+            if ohlc.low > entry:
+                today_status = "chasing"
+                gap_from_entry = (ohlc.ltp - entry) / entry * 100
+                today_status_reason = (
+                    f"LTP ₹{ohlc.ltp:.2f} is {gap_from_entry:+.1f}% above plan — "
+                    f"chasing. Wait for pullback or skip."
+                )
+            else:
+                today_status = "reachable"
+                gap_from_entry = (ohlc.ltp - entry) / entry * 100
+                today_status_reason = (
+                    f"plan reachable · LTP ₹{ohlc.ltp:.2f} ({gap_from_entry:+.1f}% vs plan)"
+                )
+
         sl_distance = entry - sl
         sl_pct = sl_distance / entry
         risk_rs = state.capital * risk_pct_used
@@ -218,8 +274,9 @@ def build_daily_picks(db: Session) -> AutoPilotState:
         target = round(entry + TARGET_R_MULTIPLE * sl_distance, 2)
         state.total_risk_rs += qty * sl_distance
 
+        rank += 1
         state.picks.append(DailyPick(
-            rank=i,
+            rank=rank,
             symbol=slot["symbol"],
             setup_label=breakdown.reason,
             confluence=_confluence_from_scans(slot["scans"]),
@@ -236,6 +293,12 @@ def build_daily_picks(db: Session) -> AutoPilotState:
             sl_method=c.extras.get("sl_method", "—") if c.extras else "—",
             score=c.score,
             tier=breakdown.tier,
+            today_open=ohlc.open if ohlc else None,
+            today_high=ohlc.high if ohlc else None,
+            today_low=ohlc.low if ohlc else None,
+            today_ltp=ohlc.ltp if ohlc else None,
+            today_status=today_status,
+            today_status_reason=today_status_reason,
         ))
 
     if not state.picks:

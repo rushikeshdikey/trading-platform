@@ -102,6 +102,21 @@
       </div>
     </div>
 
+    {# Phase A reality-check banner — shown when intraday refresh dropped
+       picks (SL already breached today) or yfinance fetch failed. #}
+    {% if ap.dropped_invalidated > 0 or ap.intraday_fetch_failed > 0 %}
+    <div class="mb-3 px-3 py-2 rounded-lg text-[11px] flex items-center gap-3 flex-wrap
+                {% if ap.dropped_invalidated > 0 %}bg-rose-50 border border-rose-200 text-rose-800{% else %}bg-zinc-50 border border-zinc-200 text-zinc-600{% endif %}">
+      <i data-lucide="alert-triangle" class="w-3.5 h-3.5"></i>
+      {% if ap.dropped_invalidated > 0 %}
+        <span><strong>{{ ap.dropped_invalidated }}</strong> pick{{ 's' if ap.dropped_invalidated > 1 else '' }} dropped — SL already breached intraday today.</span>
+      {% endif %}
+      {% if ap.intraday_fetch_failed > 0 %}
+        <span class="text-zinc-500">{{ ap.intraday_fetch_failed }} pick{{ 's' if ap.intraday_fetch_failed > 1 else '' }} have no live LTP — using prior close.</span>
+      {% endif %}
+    </div>
+    {% endif %}
+
     <div class="space-y-3">
       {% for p in ap.picks %}
       <div class="rounded-lg bg-white border border-emerald-200 px-4 py-3 flex flex-wrap items-center gap-x-5 gap-y-2">
@@ -124,6 +139,30 @@
             <div class="text-xs text-zinc-500 mt-0.5">{{ p.confluence|join(' · ') }}</div>
             {% if p.setup_label %}
             <div class="text-[11px] text-emerald-700 mt-0.5">{{ p.setup_label }}</div>
+            {% endif %}
+
+            {# Phase A reality-check strip — today's intraday OHLC + status badge.
+               Hidden when LTP unavailable (today_status='unknown'). #}
+            {% if p.today_status != 'unknown' and p.today_ltp %}
+            <div class="mt-1 flex items-center gap-2 flex-wrap text-[11px]">
+              <span class="pill text-[10px] font-bold border
+                {% if p.today_status == 'reachable' %}bg-emerald-50 text-emerald-700 border-emerald-200
+                {% elif p.today_status == 'chasing' %}bg-amber-50 text-amber-800 border-amber-300
+                {% else %}bg-zinc-50 text-zinc-600 border-zinc-200{% endif %}">
+                {% if p.today_status == 'reachable' %}✓ Plan reachable
+                {% elif p.today_status == 'chasing' %}⚠ Chasing
+                {% else %}{{ p.today_status }}{% endif %}
+              </span>
+              <span class="font-mono text-zinc-500 tabular-nums">
+                O {{ '{:,.1f}'.format(p.today_open) }} ·
+                H {{ '{:,.1f}'.format(p.today_high) }} ·
+                L {{ '{:,.1f}'.format(p.today_low) }} ·
+                LTP <strong class="text-zinc-700">{{ '{:,.1f}'.format(p.today_ltp) }}</strong>
+              </span>
+            </div>
+            {% if p.today_status == 'chasing' %}
+            <div class="text-[11px] text-amber-700 mt-0.5">{{ p.today_status_reason }}</div>
+            {% endif %}
             {% endif %}
           </div>
         </div>
