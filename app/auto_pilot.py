@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 from . import breadth as breadth_mod
 from . import dashboard as dash_svc
 from . import sector_rotation as sector_rotation_mod
+from .scanner import entry_types as entry_types_mod
 from .scanner import intraday_ltp as ltp_mod
 from .scanner import risk as risk_svc
 from .scanner import runner as scanner_runner
@@ -73,6 +74,11 @@ class DailyPick:
     today_ltp: float | None = None
     today_status: str = "unknown"   # 'reachable' / 'chasing' / 'invalidated' / 'unknown'
     today_status_reason: str = ""   # human-readable note for the badge
+    # Phase B entry-type recommender — replaces "buy at" with a typed trigger.
+    entry_type: str = "PivotBreak"  # one of entry_types_mod constants
+    entry_type_label: str = "Pivot Break"
+    trigger_price: float = 0.0      # the actual BUY level (overrides scanner's suggested_entry)
+    entry_rationale: str = ""
 
 
 @dataclass
@@ -223,14 +229,29 @@ def build_daily_picks(db: Session) -> AutoPilotState:
     qualifier_symbols = [slot["symbol"] for _, slot, _ in qualifiers]
     today_ohlc_by_sym = ltp_mod.fetch_many(qualifier_symbols)
 
+    # Phase B — fetch ascending daily closes per qualifier (last 30 bars
+    # is enough for 10/20-EMA); used by the entry-type recommender for
+    # Pullback triggers and prev-bar reference.
+    from .models import DailyBar as _DailyBar
+    bars_by_sym: dict[str, list[_DailyBar]] = {}
+    if qualifier_symbols:
+        rows = (
+            db.query(_DailyBar)
+            .filter(_DailyBar.symbol.in_(qualifier_symbols))
+            .order_by(_DailyBar.symbol, _DailyBar.date.asc())
+            .all()
+        )
+        for r in rows:
+            bars_by_sym.setdefault(r.symbol.upper(), []).append(r)
+
     rank = 0
     for composite, slot, breakdown in qualifiers:
         if rank >= MAX_PICKS:
             break  # buffer was for SL-drop backfill; not for showing >5
         c = slot["primary"]
-        entry = float(c.suggested_entry or c.close)
+        scanner_entry = float(c.suggested_entry or c.close)
         sl = float(c.suggested_sl)
-        if entry <= 0 or sl <= 0 or sl >= entry:
+        if scanner_entry <= 0 or sl <= 0 or sl >= scanner_entry:
             continue
 
         # Reality-check against today's intraday OHLC.
@@ -248,21 +269,54 @@ def build_daily_picks(db: Session) -> AutoPilotState:
                     slot["symbol"], ohlc.low, sl,
                 )
                 continue
-            # If today's low is above the planned entry, the stock has
-            # already moved past plan — chasing required. Keep but tag.
+
+        # Phase B — entry-type recommender. Replaces scanner's suggested_entry
+        # with a typed trigger appropriate to the setup (PDH for institutional
+        # buying, Pullback for Minervini, Pivot Break for HR/base-on-base, etc).
+        symbol_bars = bars_by_sym.get(slot["symbol"].upper(), [])
+        prev_bar = symbol_bars[-1] if symbol_bars else None
+        prev_high = float(prev_bar.high) if prev_bar else scanner_entry
+        prev_low = float(prev_bar.low) if prev_bar else sl
+        daily_closes = [float(b.close) for b in symbol_bars]
+
+        rec = entry_types_mod.recommend_entry_for_pick(
+            scan_types_fired=[s["type"] for s in slot["scans"]],
+            primary_scan_type=c.scan_type,
+            candidate_extras=c.extras or {},
+            daily_closes=daily_closes,
+            prev_high=prev_high,
+            prev_low=prev_low,
+            today_open=ohlc.open if ohlc else None,
+            today_high=ohlc.high if ohlc else None,
+            today_low=ohlc.low if ohlc else None,
+            today_ltp=ohlc.ltp if ohlc else None,
+            fallback_entry=scanner_entry,
+        )
+        # Trigger price is the AUTHORITATIVE entry (decision #4 from spec).
+        entry = rec.trigger_price
+
+        # Re-tag reachable/chasing using the new trigger price (the gap
+        # math depends on the actual buy level, not the scanner's stale
+        # close suggestion).
+        if ohlc is not None:
             if ohlc.low > entry:
                 today_status = "chasing"
-                gap_from_entry = (ohlc.ltp - entry) / entry * 100
+                gap = (ohlc.ltp - entry) / entry * 100
                 today_status_reason = (
-                    f"LTP ₹{ohlc.ltp:.2f} is {gap_from_entry:+.1f}% above plan — "
-                    f"chasing. Wait for pullback or skip."
+                    f"LTP ₹{ohlc.ltp:.2f} is {gap:+.1f}% above {rec.entry_type} "
+                    f"trigger ₹{entry:.2f} — chasing. Wait for pullback or skip."
                 )
             else:
                 today_status = "reachable"
-                gap_from_entry = (ohlc.ltp - entry) / entry * 100
+                gap = (ohlc.ltp - entry) / entry * 100
                 today_status_reason = (
-                    f"plan reachable · LTP ₹{ohlc.ltp:.2f} ({gap_from_entry:+.1f}% vs plan)"
+                    f"plan reachable · LTP ₹{ohlc.ltp:.2f} ({gap:+.1f}% vs trigger)"
                 )
+
+        if entry <= sl:
+            # Anticipation/Pullback can produce a trigger BELOW the SL on
+            # already-broken setups. Skip cleanly.
+            continue
 
         sl_distance = entry - sl
         sl_pct = sl_distance / entry
@@ -299,6 +353,10 @@ def build_daily_picks(db: Session) -> AutoPilotState:
             today_ltp=ohlc.ltp if ohlc else None,
             today_status=today_status,
             today_status_reason=today_status_reason,
+            entry_type=rec.entry_type,
+            entry_type_label=entry_types_mod.ENTRY_TYPE_LABELS.get(rec.entry_type, rec.entry_type),
+            trigger_price=rec.trigger_price,
+            entry_rationale=rec.rationale,
         ))
 
     if not state.picks:

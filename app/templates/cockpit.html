@@ -169,8 +169,12 @@
 
         <div class="flex-1 grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-1 text-xs tabular-nums">
           <div>
-            <div class="text-[10px] text-zinc-400 uppercase tracking-wide">Buy at</div>
+            <div class="text-[10px] text-zinc-400 uppercase tracking-wide flex items-center gap-1">
+              <span title="{{ p.entry_rationale }}" class="pill text-[9px] !py-0 !px-1.5 bg-violet-50 text-violet-800 border border-violet-200 cursor-help">{{ p.entry_type_label }}</span>
+              <span>trigger</span>
+            </div>
             <div class="font-semibold text-sm">₹{{ '{:,.2f}'.format(p.entry) }}</div>
+            <div class="text-[10px] text-zinc-400 truncate" title="{{ p.entry_rationale }}">{{ p.entry_rationale|truncate(40) }}</div>
           </div>
           <div>
             <div class="text-[10px] text-zinc-400 uppercase tracking-wide">Stop loss</div>
